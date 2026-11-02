@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import secrets
 import subprocess
 import time
@@ -183,6 +184,10 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
 
     @app.post("/api/enroll")
     def enroll(body: EnrollIn):
+        if not body.company.get("guid") or not body.company.get("name"):
+            raise HTTPException(422, "company name and guid required")
+        if body.ssh_pubkey and not re.fullmatch(r"(ssh-ed25519|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+( [\w@.\-]+)?", body.ssh_pubkey.strip()):
+            raise HTTPException(422, "unsupported SSH public key")
         with db.tx() as t:
             e = t.conn.execute("SELECT * FROM enrollments WHERE code_hash=?", (sha(body.code.strip().upper()),)).fetchone()
             if not e or e["used_at"] or e["expires_at"] < time.time():
@@ -190,8 +195,6 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
             device_id = new_id()
             t.conn.execute("UPDATE enrollments SET used_at=?, device_id=? WHERE code_hash=?", (time.time(), device_id, e["code_hash"]))
         comp = body.company
-        if not comp.get("guid") or not comp.get("name"):
-            raise HTTPException(422, "company name and guid required")
         try:
             cert = pki.issue_device_cert(device_id, body.csr_pem.encode())
         except Exception as ex:  # noqa: BLE001

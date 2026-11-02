@@ -161,7 +161,7 @@ def serve(fake: FakeTally, host: str = "127.0.0.1", port: int = 0) -> tuple[Thre
     return srv, srv.server_address[1]
 
 
-if __name__ == "__main__":
+def main() -> None:
     import argparse
     p = argparse.ArgumentParser(description="Fake Tally XML server (development only)")
     p.add_argument("--port", type=int, default=9000)
@@ -169,3 +169,7 @@ if __name__ == "__main__":
     srv, port = serve(FakeTally(), port=a.port)
     print(f"Fake Tally listening on 127.0.0.1:{port}")
     threading.Event().wait()
+
+
+if __name__ == "__main__":
+    main()

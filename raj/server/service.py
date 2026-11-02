@@ -215,7 +215,7 @@ class Service:
             if settings.get("maker_checker") and user["id"] in (d["created_by"], row["edited_by"]):
                 raise HTTPException(403, "maker-checker: the preparer cannot approve their own draft")
             voucher = json.loads(row["voucher"])
-            if max(Decimal(e["amount"]) for e in voucher["entries"]) > Decimal(str(settings.get("high_value_threshold", "1e18"))) \
+            if max(Decimal(e["amount"]) for e in voucher["entries"]) > Decimal(str(settings.get("high_value_threshold") or "1e18")) \
                     and user["role"] != "admin":
                 raise HTTPException(403, f"row {row['row_no']} exceeds high-value threshold; admin approval needed")
             payload = {**voucher}

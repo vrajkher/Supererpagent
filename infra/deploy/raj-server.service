@@ -1,0 +1,18 @@
+[Unit]
+Description=RAJ Finance Agent server
+After=network-online.target
+
+[Service]
+User=raj
+Group=raj
+EnvironmentFile=/etc/raj/server.env
+ExecStart=/opt/raj/.venv/bin/raj-server serve --host 127.0.0.1 --port 8080 --data /var/lib/raj/server
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/raj
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

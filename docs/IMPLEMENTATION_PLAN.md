@@ -1,6 +1,8 @@
 # RAJ Finance Agent — Implementation Plan
 
-Status: engineering plan, derived from `docs/PRODUCT_PLAN.md` (v1.0) and the agreed two-part architecture. Nothing in this document is built yet. Items marked **VERIFY** depend on behaviour of pinned third-party releases (DeepSeek Harness, RAJTALLYFINLMCP, OpenSSH, TallyPrime) that must be confirmed before coding against them.
+Status (updated): M0–M3 and most of M4 are implemented in this repo; see README "What works now" and docs/OPERATIONS.md "Go-live gates" for what is still unverified (live TallyPrime, sshd, Windows build).
+
+Original status: engineering plan, derived from `docs/PRODUCT_PLAN.md` (v1.0) and the agreed two-part architecture. Nothing in this document is built yet. Items marked **VERIFY** depend on behaviour of pinned third-party releases (DeepSeek Harness, RAJTALLYFINLMCP, OpenSSH, TallyPrime) that must be confirmed before coding against them.
 
 ---
 
