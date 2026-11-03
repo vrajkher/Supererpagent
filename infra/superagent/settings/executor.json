@@ -1,0 +1,5 @@
+{"model": {"provider": "deepseek-official", "model": "deepseek-v4-pro"},
+ "maxWorkers": 2,
+ "directory": "<absolute path, e.g. /home/raj-dev/.dsh/state/superagent/work>",
+ "prepare": "git -C <absolute clone path> fetch --no-tags \"https://github.com/$DSH_SUPERAGENT_GITHUB_REPOSITORY.git\" \"${DSH_SUPERAGENT_GITHUB_PR_HEAD:-HEAD}:refs/dsh-superagent/$DSH_SUPERAGENT_TICKET\" && git -C <absolute clone path> worktree add -b \"agent/$DSH_SUPERAGENT_NAME\" \"$DSH_SUPERAGENT_DIR\" \"refs/dsh-superagent/$DSH_SUPERAGENT_TICKET\" && cd \"$DSH_SUPERAGENT_DIR\" && python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev,agent]'",
+ "blockedCommands": ["ssh", "scp", "sftp", "rsync", "raj-server", "raj-connector", "sqlite3"]}

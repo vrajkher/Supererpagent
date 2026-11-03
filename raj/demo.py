@@ -29,6 +29,11 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--dir", default="./var/demo")
     ap.add_argument("--reset", action="store_true")
+    ap.add_argument("--backend", choices=["xml", "mcp"], default="xml",
+                    help="xml: built-in adapter + RAJ fake Tally; mcp: RAJTALLYFINLMCP + its demo Tally (GST, P&L ...)")
+    ap.add_argument("--agent", choices=["rules", "dsh-fake", "dsh"], default="rules",
+                    help="rules: no model; dsh-fake: real DeepSeek Harness with a scripted offline model; "
+                         "dsh: DeepSeek Harness with DEEPSEEK_API_KEY")
     a = ap.parse_args()
     root = Path(a.dir)
     if a.reset and root.exists():
@@ -39,8 +44,25 @@ def main() -> None:
     from .server.app import Settings, create_app, init_org
     from .tally.fake_server import FakeTally, serve
 
-    tally_srv, tport = serve(FakeTally())
+    if a.backend == "mcp":
+        from rajtally_mcp import demo_tally
+        tport = _free()
+        tally_srv, _ = demo_tally.start(tport)
+        company = "Demo Traders Pvt Ltd"
+    else:
+        tally_srv, tport = serve(FakeTally())
+        company = "Demo Traders Pvt Ltd"
     tally_url = f"http://127.0.0.1:{tport}"
+    os.environ["RAJ_AGENT_RUNTIME"] = "rules" if a.agent == "rules" else "dsh"
+    fake_note = ""
+    if a.agent == "dsh-fake":
+        from .testing.fake_deepseek import FakeDeepSeek, serve as serve_model
+        _, mport = serve_model(FakeDeepSeek())
+        os.environ["DEEPSEEK_BASE_URL"] = f"http://127.0.0.1:{mport}"
+        os.environ["DEEPSEEK_API_KEY"] = "offline-demo"
+        fake_note = "  agent: DeepSeek Harness with a SCRIPTED OFFLINE model (not real AI)\n"
+    elif a.agent == "dsh" and not os.environ.get("DEEPSEEK_API_KEY"):
+        raise SystemExit("--agent dsh needs DEEPSEEK_API_KEY")
     first = not (root / "server" / "raj.sqlite3").exists()
     (root / "server").mkdir(parents=True, exist_ok=True)
     if first:
@@ -52,16 +74,16 @@ def main() -> None:
         time.sleep(0.05)
     base = f"http://127.0.0.1:{a.port}"
 
-    conn = root / "connector"
-    if first:
+    conn = root / f"connector-{a.backend}"
+    if not (conn / "config.json").exists():
         with httpx.Client(base_url=base, timeout=30) as h:
             tok = h.post("/api/login", json={"email": "admin@demo.local", "password": "demo-password-1"}).json()["token"]
             hd = {"Authorization": f"Bearer {tok}"}
-            cid = h.post("/api/clients", json={"name": "Demo Traders (Client A)"}, headers=hd).json()["id"]
+            cid = h.post("/api/clients", json={"name": f"Demo Traders ({a.backend})"}, headers=hd).json()["id"]
             code = h.post(f"/api/clients/{cid}/enrollment", headers=hd).json()["code"]
             gport = _free()
-            pair(base, code, conn, tally_url, "Demo Traders Pvt Ltd", gport, direct_url=f"https://127.0.0.1:{gport}",
-                 http=h, assume_yes=True)
+            pair(base, code, conn, tally_url, company, gport, direct_url=f"https://127.0.0.1:{gport}",
+                 http=h, assume_yes=True, backend=a.backend)
     from .gateway.app import GatewayConfig
     cfg = GatewayConfig.load(conn / "config.json")
     cfg.tally_url = tally_url
@@ -69,7 +91,7 @@ def main() -> None:
     _, gsrv = gateway_server(cfg)
     threading.Thread(target=gsrv.run, daemon=True).start()
     print(f"\nRAJ demo running: {base}\n  login: admin@demo.local / demo-password-1\n"
-          f"  fake Tally: {tally_url}  (NOT real Tally)\n  sample statement: fixtures/hdfc_oct_2026.csv (bank ledger: HDFC Bank)\n"
+          f"  fake Tally: {tally_url}  (NOT real Tally; backend {a.backend})\n{fake_note}  sample statement: fixtures/hdfc_oct_2026.csv (bank ledger: HDFC Bank)\n"
           f"  enable posting: Device Health -> Enable posting, and `raj-connector --data {conn} enable-writes`\n")
     try:
         threading.Event().wait()

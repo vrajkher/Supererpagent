@@ -43,8 +43,16 @@ def _protect(path: Path) -> None:
         path.chmod(0o600)
 
 
-def choose_company(tally: TallyClient, name: str | None) -> dict:
-    comps = tally.open_companies()
+def open_companies(tally_url: str, backend: str) -> list[dict]:
+    if backend == "mcp":
+        from urllib.parse import urlparse
+        from ..tally.mcp_backend import list_companies
+        u = urlparse(tally_url)
+        return list_companies(u.hostname or "127.0.0.1", u.port or 9000)
+    return TallyClient(tally_url).open_companies()
+
+
+def choose_company(comps: list[dict], name: str | None) -> dict:
     if not comps:
         raise SystemExit("No company is open in Tally. Open the client's company and retry.")
     if name:
@@ -62,10 +70,9 @@ def choose_company(tally: TallyClient, name: str | None) -> dict:
 
 def pair(server: str, code: str, data: Path, tally_url: str, company: str | None, listen_port: int,
          direct_url: str | None = None, http: httpx.Client | None = None, server_ca: str | None = None,
-         assume_yes: bool = False) -> GatewayConfig:
+         assume_yes: bool = False, backend: str = "mcp") -> GatewayConfig:
     data.mkdir(parents=True, exist_ok=True)
-    tally = TallyClient(tally_url)
-    comp = choose_company(tally, company)
+    comp = choose_company(open_companies(tally_url, backend), company)
     print(f"Company: {comp['name']}  GUID {comp['guid']}")
     if not assume_yes and input("Confirm this is the only company RAJ may access [y/N]: ").strip().lower() != "y":
         raise SystemExit("cancelled")
@@ -95,7 +102,7 @@ def pair(server: str, code: str, data: Path, tally_url: str, company: str | None
         (data / "known_hosts").write_text(ssh["known_hosts"].strip() + "\n")
     cfg = GatewayConfig(device_id=res["device_id"], org_id=res["org_id"], client_id=res["client_id"],
                         company_name=comp["name"], company_guid=comp["guid"], server_signing_pub=res["server_signing_pub"],
-                        tally_url=tally_url, listen_port=listen_port, data_dir=str(data),
+                        tally_url=tally_url, tally_backend=backend, listen_port=listen_port, data_dir=str(data),
                         tls_cert=str(data / "gateway.crt"), tls_key=str(data / "gateway.key"),
                         bridge_ca=str(data / "bridge_ca.crt"), ssh=ssh, server_url=server)
     cfg.save(data / "config.json")
@@ -103,7 +110,7 @@ def pair(server: str, code: str, data: Path, tally_url: str, company: str | None
     return cfg
 
 
-def gateway_server(cfg: GatewayConfig, tally: TallyClient | None = None):
+def gateway_server(cfg: GatewayConfig, tally=None):
     import uvicorn
     gw = Gateway(cfg, tally, Path(cfg.data_dir) / "config.json")
     app = create_app(gw)
@@ -164,11 +171,19 @@ def run(data: Path) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["tally-mcp"]:
+        # the frozen exe re-invokes itself to run RAJTALLYFINLMCP (see raj.tally.mcp_backend.mcp_command)
+        from rajtally_mcp.__main__ import main as tally_main
+        sys.argv = ["rajtally-mcp", *args[1:]]
+        tally_main()
+        return
     p = argparse.ArgumentParser(prog="raj-connector")
     p.add_argument("--data", type=Path, default=default_data_dir())
     sub = p.add_subparsers(dest="cmd", required=True)
     c = sub.add_parser("companies")
     c.add_argument("--tally", default="http://127.0.0.1:9000")
+    c.add_argument("--backend", choices=["mcp", "xml"], default="mcp")
     pr = sub.add_parser("pair")
     pr.add_argument("--server", required=True)
     pr.add_argument("--code", required=True)
@@ -178,20 +193,23 @@ def main(argv: list[str] | None = None) -> None:
     pr.add_argument("--direct-url", help="development only: gateway URL reachable by the server without SSH")
     pr.add_argument("--server-ca", help="CA bundle for a private server certificate")
     pr.add_argument("--yes", action="store_true")
+    pr.add_argument("--backend", choices=["mcp", "xml"], default="mcp",
+                    help="mcp = RAJTALLYFINLMCP (recommended); xml = built-in minimal adapter")
     sub.add_parser("run")
     sub.add_parser("status")
     for name in ("pause", "resume", "enable-writes", "disable-writes"):
         sub.add_parser(name)
-    a = p.parse_args(argv)
+    a = p.parse_args(args)
 
     if a.cmd == "companies":
         try:
-            for comp in TallyClient(a.tally).open_companies():
+            for comp in open_companies(a.tally, a.backend):
                 print(f"{comp['name']}\t{comp['guid']}\t{comp['books_from']}")
         except TallyError as e:
             sys.exit(f"Tally not reachable: {e}")
     elif a.cmd == "pair":
-        pair(a.server, a.code, a.data, a.tally, a.company, a.listen_port, a.direct_url, server_ca=a.server_ca, assume_yes=a.yes)
+        pair(a.server, a.code, a.data, a.tally, a.company, a.listen_port, a.direct_url, server_ca=a.server_ca,
+             assume_yes=a.yes, backend=a.backend)
     elif a.cmd == "run":
         run(a.data)
     else:

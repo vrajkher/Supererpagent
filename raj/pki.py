@@ -96,7 +96,7 @@ class ServerPKI:
 
     def __init__(self, root: Path):
         from .contracts import generate_signing_key, load_private_key, private_key_pem, public_key_pem
-        self.root = Path(root)
+        self.root = Path(root).resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         p = self.root
         if not (p / "device_ca.crt").exists():

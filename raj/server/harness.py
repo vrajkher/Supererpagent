@@ -40,18 +40,36 @@ Rules:
 class ToolSession:
     """Everything a model-driven job may touch. Holds the job token; enforces the allow-list."""
 
-    def __init__(self, db: DB, bridge: Bridge, signing_key, job: dict, device: dict, allowed: tuple[str, ...]):
+    def __init__(self, db: DB, bridge: Bridge, signing_key, job: dict, device: dict, allowed: tuple[str, ...],
+                 tally_passthrough: bool = False):
         self.db, self.bridge, self.key, self.job, self.device = db, bridge, signing_key, job, device
-        self.allowed = allowed
+        self.allowed = tuple(allowed)
+        self.tally_passthrough = tally_passthrough
         self.calls = 0
+        self._catalog: list[dict] | None = None
+
+    def catalog(self) -> list[dict]:
+        """Read tools the connector offers (core + RAJTALLYFINLMCP read profile), fetched once per job."""
+        if self._catalog is None:
+            res = self.bridge.call(self.device["id"], "POST", "/tools/list", token=self._token(tools=()))
+            self._catalog = res["tools"]
+            if self.tally_passthrough:
+                self.allowed = tuple(dict.fromkeys(self.allowed + tuple(
+                    t["name"] for t in self._catalog if t.get("kind") == "tally")))
+        return self._catalog
+
+    def has(self, tool: str) -> bool:
+        return tool in self.allowed or (self.tally_passthrough and any(t["name"] == tool for t in self.catalog()))
 
     def _token(self, capability: str = "read", tools: tuple[str, ...] | None = None) -> str:
         return make_job_token(self.key, job_id=self.job["id"], org_id=self.job["org_id"],
                               client_id=self.job["client_id"], device_id=self.device["id"],
                               company_guid=self.device["company_guid"], capability=capability,
-                              allowed_tools=list(tools or self.allowed))
+                              allowed_tools=list(self.allowed if tools is None else tools))
 
     def tool(self, name: str, **args) -> Any:
+        if self.tally_passthrough and name.startswith("tally_"):
+            self.catalog()
         if name not in self.allowed:
             raise BridgeError(403, f"tool {name} not available to this job")
         self.calls += 1
@@ -74,8 +92,17 @@ def _meta(sess: ToolSession, res: dict, period: str) -> dict:
 
 
 def skill_trial_balance(sess: ToolSession, as_of: str, **_) -> dict:
-    res = sess.tool("trial_balance")
-    s = calc.trial_balance_summary(res["result"])
+    if sess.tally_passthrough and sess.has("tally_trial_balance"):
+        # RAJTALLYFINLMCP computes the TB the way Tally does (including stock and opening differences);
+        # we re-total it with Decimal and check the tie-out ourselves.
+        res = sess.tool("tally_trial_balance", to_date=as_of)
+        rows = [{"name": r["name"], "parent": r.get("group", ""),
+                 "closing": calc.fmt(calc.money(repr(r.get("closing_dr", 0))) - calc.money(repr(r.get("closing_cr", 0))))}
+                for r in res["result"].get("rows", [])]
+    else:
+        res = sess.tool("trial_balance")
+        rows = res["result"]
+    s = calc.trial_balance_summary(rows)
     return {"title": "Trial Balance", "meta": {**_meta(sess, res, f"as on {as_of} (Tally current period)"),
                                                "tie_out": s["tie_out"]},
             "sections": [{"title": "Ledgers", "columns": ["ledger", "group", "debit", "credit"], "rows": s["rows"]},
@@ -205,12 +232,26 @@ def plan_without_model(question: str) -> tuple[str, dict]:
 # ---------------------------------------------------------------- runner
 
 class Harness:
-    def __init__(self, db: DB, bridge: Bridge, signing_key, llm: Any = None):
+    """Chooses the agent runtime for a read job.
+
+    * ``dsh``    DeepSeek Harness session (``dsh_worker.DshRunner``) with the RAJ MCP bridge as its only tools
+    * ``direct`` the built-in OpenAI-compatible tool loop below (``DeepSeekLLM``)
+    * ``rules``  no model: a deterministic planner picks one skill
+    """
+
+    def __init__(self, db: DB, bridge: Bridge, signing_key, llm: Any = None, dsh: Any = None):
         self.db, self.bridge, self.key = db, bridge, signing_key
         self.llm = llm
+        self.dsh = dsh
+
+    @property
+    def runtime(self) -> str:
+        return "dsh" if self.dsh else "direct" if self.llm else "rules"
 
     def run_question(self, job: dict, device: dict, question: str, as_of: str, client_name: str) -> dict:
-        sess = ToolSession(self.db, self.bridge, self.key, job, device, READ_TOOLS)
+        if self.dsh is not None:
+            return self.dsh.run_question(job, device, question, as_of, client_name)
+        sess = ToolSession(self.db, self.bridge, self.key, job, device, READ_TOOLS, tally_passthrough=True)
         reports: list[dict] = []
 
         def run_skill(name: str, args: dict) -> dict:

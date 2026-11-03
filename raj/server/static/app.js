@@ -84,7 +84,8 @@ function events(job) {
 
 // ------------------------------------------------------------------ ask
 function viewAsk(v) {
-  const ex = ["Show receivables older than 90 days", "Trial balance", "Ledger of HDFC Bank", "Payables ageing", "90 દિવસથી વધુ બાકી લેણાં બતાવો"];
+  const ex = ["Show receivables older than 90 days", "Trial balance", "Ledger of HDFC Bank", "Payables ageing",
+    "What is our GST position?", "Profit and loss this year", "Balance sheet", "Run audit checks (40A(3), 269ST)", "90 દિવસથી વધુ બાકી લેણાં બતાવો"];
   v.innerHTML = `<div class="card"><h2>Ask the books</h2>
     <div class="chips">${ex.map((q) => `<button>${esc(q)}</button>`).join("")}</div>
     <textarea id="q" placeholder="e.g. Show receivables older than 90 days"></textarea>

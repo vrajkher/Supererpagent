@@ -83,13 +83,31 @@ class ApproveIn(BaseModel):
     row_ids: list[str]
 
 
-def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
+def _runtime(s: "Settings", db, bridge, pki, llm, dsh):
+    """Pick the agent runtime: explicit injection (tests), RAJ_AGENT_RUNTIME, or the best available."""
+    from . import dsh_worker
+    mode = os.environ.get("RAJ_AGENT_RUNTIME", "auto")
+    if dsh is not None or llm is not None:
+        return llm, dsh
+    if mode == "rules":
+        return None, None
+    if mode == "direct":
+        return llm_from_env(), None
+    if mode == "dsh" or (mode == "auto" and os.environ.get("DEEPSEEK_API_KEY") and dsh_worker.available()):
+        if not dsh_worker.available():
+            raise SystemExit("RAJ_AGENT_RUNTIME=dsh needs: pip install --pre deepseek-harness-sdk")
+        return None, dsh_worker.DshRunner(db, bridge, pki, s.data_dir)
+    return None, None
+
+
+def create_app(settings: Settings | None = None, llm=None, dsh=None) -> FastAPI:
     s = settings or Settings()
     s.data_dir.mkdir(parents=True, exist_ok=True)
     db = DB(s.data_dir / "raj.sqlite3")
     pki = ServerPKI(s.data_dir / "pki")
     bridge = Bridge(db, device_ca_path=pki.device_ca_path, cert_path=pki.bridge_cert_path, key_path=pki.bridge_key_path)
-    harness = Harness(db, bridge, pki.signing_key, llm if llm is not None else llm_from_env())
+    llm, dsh = _runtime(s, db, bridge, pki, llm, dsh)
+    harness = Harness(db, bridge, pki.signing_key, llm, dsh)
     svc = Service(db, bridge, pki, harness, s.data_dir)
     user_dep = current_user(db)
 
@@ -114,7 +132,8 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
     def me(user=Depends(user_dep)):
         org = db.one("SELECT * FROM orgs WHERE id=?", (user["org_id"],))
         return {"user": user, "org": {"id": org["id"], "name": org["name"], "settings": json.loads(org["settings"])},
-                "model": "deepseek" if harness.llm else "rules (no DEEPSEEK_API_KEY)"}
+                "model": {"dsh": "DeepSeek Harness", "direct": "DeepSeek (direct)",
+                          "rules": "rules (no DEEPSEEK_API_KEY)"}[harness.runtime]}
 
     # ------------------------------------------------------------ admin
     @app.get("/api/clients")
