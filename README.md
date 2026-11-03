@@ -23,6 +23,21 @@ Development: DeepSeek Super-agent (separate machine and account) ─► pull req
 | **RAJTALLYFINLMCP** (54 tools) | The connector's Tally adapter. Two locked child processes on the client PC: *reader* (`--tool-profile read`, read_only) and *writer* (`--tool-profile post`, voucher creation only, company GUID re-checked before every write). The model can use every read tool: P&L, balance sheet, GST, GSTR-1, HSN, TDS, bank reconciliation, audit checks, stock, vouchers and masters | `raj/tally/mcp_backend.py`; hardening in the RAJTALLYFINLMCP repo (`policy.py`) |
 | **DeepSeek Super-agent** | Develops this repository: it turns issues and comments from allowed people into draft PRs and fixes red CI on `main`. Its workers follow `AGENTS.md`. It never touches production | `infra/superagent/`, `AGENTS.md` |
 
+## Workflow and next steps
+
+- [Complete workflow — ગુજરાતી સમજ + current/planned architecture](docs/WORKFLOW.md)
+- [Ordered roadmap — fixes, regression tests, Windows/SSH CI, real Tally and pilot gates](docs/ROADMAP.md)
+- [Operations and go-live gates](docs/OPERATIONS.md)
+
+**Implementation boundary:**
+- The finance agent runs on the DeepSeek Harness runtime when a key is configured; otherwise the rule-based planner runs.
+- The connector uses RAJTALLYFINLMCP by default; the built-in XML adapter is still available with `--backend xml`.
+- Central state is SQLite.
+- The local demo and tests use direct loopback mTLS without SSH.
+- Harness and RAJTALLYFINLMCP are tested against a scripted model and RAJTALLYFINLMCP's demo Tally, not against live DeepSeek inference or real TallyPrime.
+
+**Review update (2026-11-03):** an independent Windows review passed the original 27 tests but found accounting, model-evidence, onboarding, Windows packaging and SSH configuration defects (R1–R7). [ROADMAP.md](docs/ROADMAP.md) records each one and whether this branch addresses it. Follow the roadmap before client posting.
+
 ## What works now
 
 | Area | Status |
@@ -35,14 +50,14 @@ Development: DeepSeek Super-agent (separate machine and account) ─► pull req
 | Pairing: single-use 24h code, local device key and CSR, server-chosen certificate identity, company binding by GUID | Done |
 | Security: per-call Ed25519 job tokens, tool allow-list, mTLS with separate device and bridge CAs, hostname-pinned gateway identity, cross-client denial | Done, tested |
 | Bank CSV/XLSX: column/date detection with required confirmation, Indian number formats, running-balance check, duplicates | Done |
-| Matching: reference+amount, amount+date window (unique), one-to-many; never amount alone | Done |
+| Matching: reference+amount, amount+date window, one-to-many | Implemented; competing-row uniqueness defect reproduced. See roadmap R3. |
 | Drafts: ledger suggestions with evidence, edit creates a new version and voids approvals | Done |
 | Approval: signed envelope over the exact payload hash; maker-checker, high-value threshold | Done |
 | Posting: server and local write switches, local SQLite journal, one writer per connector, company re-check, ledger validation, read-back verification | Done |
 | Recovery: lost Tally response is resolved by correlation reference (no blind retry); unknown results block further writes until reconciled | Done, failure-injection tested |
 | Portal: login, client switcher, Ask, Reconciliation, Jobs/audit trail, Device Health (separate statuses), staff/roles, policy, evidence export | Done, browser-tested |
 | SSH: sshd config, per-key `permitlisten`, AuthorizedKeysCommand from the DB, kill-on-revoke, verification script | Written. **Not executed here: no sshd in the build container** |
-| Windows: connector CLI, NSSM service installer, PyInstaller build script | Written. **Not built or run on Windows yet** |
+| Windows: connector CLI, NSSM service installer, PyInstaller build script | Build reproduced on Windows; frozen EXE startup fails with a relative-import error. Service/reboot validation pending. |
 
 **Not yet validated against real TallyPrime.** All Tally request and response shapes are exercised against `raj/tally/fake_server.py`, which mimics Tally's XML collection export and IMPORTDATA. Before any client use, run the read checks and posting tests on a test company. Read [docs/OPERATIONS.md](docs/OPERATIONS.md), section "Go-live gates", first.
 
