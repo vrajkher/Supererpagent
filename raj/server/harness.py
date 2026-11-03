@@ -85,6 +85,23 @@ class ToolSession:
 
 # ---------------------------------------------------------------- skills (deterministic)
 
+WINDOW_DAYS = 366  # below the gateway's 400-day ceiling per request
+
+
+def ledger_vouchers_paged(sess, ledger: str, from_date: str, to_date: str) -> tuple[list[dict], dict]:
+    """All vouchers touching ``ledger`` in [from_date, to_date], fetched in bounded windows so books of
+    any length work without raising the gateway's per-request limit (R6). Returns (vouchers, last response)."""
+    start, end = date.fromisoformat(from_date), date.fromisoformat(to_date)
+    out: dict[str, dict] = {}
+    res: dict = {"result": [], "company": sess.device.get("company_name"), "extracted_at": time.time()}
+    while start <= end:
+        stop = min(end, start + timedelta(days=WINDOW_DAYS - 1))
+        res = sess.tool("ledger_vouchers", ledger=ledger, from_date=start.isoformat(), to_date=stop.isoformat())
+        for v in res["result"]:
+            out.setdefault(v["voucher_id"] or f"{v['date']}|{v['number']}", v)
+        start = stop + timedelta(days=1)
+    return list(out.values()), res
+
 def _meta(sess: ToolSession, res: dict, period: str) -> dict:
     return {"company": res["company"], "period": period,
             "extracted_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(res["extracted_at"])),
@@ -133,10 +150,10 @@ def skill_ledger_statement(sess: ToolSession, as_of: str, ledger: str, from_date
     to_date = to_date or as_of
     books = comp.get("books_from") or (date.fromisoformat(to_date) - timedelta(days=365)).isoformat()
     from_date = from_date or books
-    res = sess.tool("ledger_vouchers", ledger=L["name"], from_date=books, to_date=to_date)
+    vouchers, res = ledger_vouchers_paged(sess, L["name"], books, to_date)
     bal = calc.money(L["opening"])
     rows, opening_for_period = [], None
-    for v in sorted(res["result"], key=lambda v: (v["date"], v["number"])):
+    for v in sorted(vouchers, key=lambda v: (v["date"], v["number"])):
         amt = sum((calc.money(e["signed"]) for e in v["entries"] if e["ledger"] == L["name"]), Decimal("0.00"))
         if v["date"] < from_date:
             bal += amt

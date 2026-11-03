@@ -56,7 +56,7 @@ Development: DeepSeek Super-agent (separate machine and account) ─► pull req
 | Posting: server and local write switches, local SQLite journal, one writer per connector, company re-check, ledger validation, read-back verification | Done |
 | Recovery: lost Tally response is resolved by correlation reference (no blind retry); unknown results block further writes until reconciled | Done, failure-injection tested |
 | Portal: login, client switcher, Ask, Reconciliation, Jobs/audit trail, Device Health (separate statuses), staff/roles, policy, evidence export | Done, browser-tested |
-| SSH: sshd config, per-key `permitlisten`, AuthorizedKeysCommand from the DB, kill-on-revoke, verification script | Written. **Not executed here: no sshd in the build container** |
+| SSH: sshd config, per-key `permitlisten`, AuthorizedKeysCommand from the DB, kill-on-revoke | Tested against real OpenSSH 9.6 by `infra/ssh/ci-sshd-test.sh` (16 allow/deny checks; CI job `sshd-integration`). **Reconnect/backoff and production host not yet tested** |
 | Windows: connector CLI, NSSM service installer, PyInstaller build script | Build reproduced on Windows; frozen EXE startup fails with a relative-import error. Service/reboot validation pending. |
 
 **Not yet validated against real TallyPrime.** All Tally request and response shapes are exercised against `raj/tally/fake_server.py`, which mimics Tally's XML collection export and IMPORTDATA. Before any client use, run the read checks and posting tests on a test company. Read [docs/OPERATIONS.md](docs/OPERATIONS.md), section "Go-live gates", first.
@@ -66,13 +66,13 @@ Development: DeepSeek Super-agent (separate machine and account) ─► pull req
 ```bash
 python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev,agent,tally]"
-pytest -q                       # 36 tests, unit and end to end
+pytest -q                       # 43 tests, unit and end to end
 raj-demo --reset                # http://127.0.0.1:8080   admin@demo.local / demo-password-1
 raj-demo --reset --backend mcp --agent dsh-fake   # RAJTALLYFINLMCP + real DeepSeek Harness, offline scripted model
 DEEPSEEK_API_KEY=... raj-demo --reset --backend mcp --agent dsh   # real model
 ```
 
-The 36 tests cover:
+The 43 tests cover:
 - unit tests;
 - portal API → mTLS → gateway → fake Tally;
 - the gateway on RAJTALLYFINLMCP;

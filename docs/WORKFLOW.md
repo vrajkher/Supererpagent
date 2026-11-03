@@ -6,7 +6,10 @@ Updated: 2026-11-03 (India time).
 
 Staff Portal માં client પસંદ કરીને કામ આપે છે. Harness યોગ્ય finance Skill પસંદ કરે છે. Server Bridge SSH tunnel મારફતે client ના Local Gateway સુધી પહોંચે છે. Gateway permissions અને company તપાસીને Tally adapter દ્વારા data વાંચે અથવા approved voucher post કરે છે. પરિણામ ફરી Portal માં આવે છે.
 
-**હાલ અને આયોજન વચ્ચેનો ફરક:** હાલ Gateway પોતાનો `raj/tally/xml_client.py` adapter વાપરે છે. RAJTALLYFINLMCP જોડવાનું આયોજન છે; તે હજી implemented અથવા verified નથી. નીચેના diagrams માં બંને સ્પષ્ટ અલગ છે.
+**હાલની સ્થિતિ (update):**
+- Gateway હવે default તરીકે locked RAJTALLYFINLMCP વાપરે છે (`raj/tally/mcp_backend.py`); `--backend xml` થી જૂનો `xml_client.py` adapter પણ ચાલે છે.
+- પ્રશ્નો DeepSeek Harness session તરીકે ચાલે છે (`raj/server/dsh_worker.py`).
+- બંને માત્ર RAJTALLYFINLMCPના demo Tally અને scripted model સાથે tested છે. Real TallyPrime અને live DeepSeek હજી verified નથી.
 
 ## 1. Current implementation
 
@@ -14,10 +17,10 @@ Staff Portal માં client પસંદ કરીને કામ આપે �
 flowchart TD
     USER["Staff browser / mobile"] --> PORTAL["Portal + FastAPI API"]
     PORTAL --> DB["SQLite: users, clients, jobs, drafts, approvals, events"]
-    PORTAL --> HARNESS["Custom Python harness"]
-    HARNESS <--> MODEL["Optional DeepSeek-compatible API"]
-    HARNESS --> SKILLS["Deterministic finance skill functions"]
-    SKILLS --> SESSION["ToolSession: allowed tools + signed job token"]
+    PORTAL --> HARNESS["DeepSeek Harness session (sdk-minimal, patched: no shell/files)"]
+    HARNESS <--> MODEL["DeepSeek Messages API"]
+    HARNESS --> AMCP["RAJ MCP bridge (stdio): finance skills + RAJTALLYFINLMCP read tools"]
+    AMCP --> SESSION["Read job token: allowed tools, org/client/device/company"]
     SESSION --> BRIDGE["Bridge: device-hostname-verified mTLS"]
     PORTAL --> APPROVAL["Draft review + signed execution envelope"]
     APPROVAL --> BRIDGE
@@ -25,22 +28,29 @@ flowchart TD
     ROUTE --> TUNNEL["SSH reverse tunnel: intended production transport"]
     TUNNEL --> GATEWAY["Windows Local Gateway: identity + policy"]
     GATEWAY --> JOURNAL["Local SQLite execution journal"]
-    GATEWAY --> ADAPTER["Current custom Tally XML adapter"]
-    ADAPTER --> TALLY["TallyPrime XML/HTTP"]
+    GATEWAY --> READER["RAJTALLYFINLMCP reader: --lock, read profile"]
+    GATEWAY --> WRITER["RAJTALLYFINLMCP writer: --lock, post profile, GUID check"]
+    READER --> TALLY["TallyPrime XML/HTTP"]
+    WRITER --> TALLY
 ```
 
 The local demo and existing end-to-end tests connect Bridge directly to Gateway over loopback mTLS, without sshd. Production SSH configuration exists but requires correction and actual tunnel testing; see [ROADMAP.md](ROADMAP.md).
 
-The central database is SQLite. The harness and its five finance skills are implemented in Python; integration with the separate DeepSeek Harness project is not implemented. Model API calls use an OpenAI-compatible HTTP interface. This does not imply any separate harness SDK is installed.
+The central database is SQLite.
 
-## 2. Planned RAJTALLYFINLMCP integration
+- **Runtime.** With `DEEPSEEK_API_KEY` set, each question runs as a session in the real DeepSeek Harness runtime (`deepseek-harness-sdk`, pinned).
+- **Tools.** The session's only tool server is the RAJ MCP bridge, which holds a read-only job token. A per-job Cordis patch disables the shell, file and working-directory tools.
+- **Without a key.** A deterministic planner runs the same skills.
+- **Figures.** Every figure in the model's text is checked against the tool data saved for the job. Unsupported figures are flagged as unverified.
+
+## 2. RAJTALLYFINLMCP integration (implemented; real-Tally validation pending)
 
 ```mermaid
 flowchart LR
     BR["Server Bridge"] --> SSH["Authenticated reverse tunnel"]
     SSH --> GW["Local Gateway: policy + journal + approval checks"]
-    GW --> DRIVER["Planned scoped MCP adapter"]
-    DRIVER --> MCP["Pinned RAJTALLYFINLMCP stdio child"]
+    GW --> DRIVER["Scoped MCP adapter (raj/tally/mcp_backend.py)"]
+    DRIVER --> MCP["Pinned RAJTALLYFINLMCP stdio children: reader + writer"]
     MCP --> T["Fixed local Tally endpoint"]
 ```
 
@@ -53,7 +63,16 @@ Keep the Gateway's security and recovery boundaries when adding MCP:
 - Preserve signed exact-payload approvals, local write ceiling, journal and read-back verification.
 - Test the real MCP protocol path separately from the current custom REST adapter path.
 
-The current `/tools/call` HTTP endpoint is a custom REST interface; its name and UI labels do not establish MCP compatibility. See [the product plan](PRODUCT_PLAN.md) for the target architecture.
+How each requirement above is met:
+
+- RAJTALLYFINLMCP is pinned to a commit.
+- Children start with `--lock --company <bound>`.
+- The reader has `--tool-profile read --access read_only`.
+- The writer has `--tool-profile post --access read_write --company-guid <bound guid>` and starts only when posting is needed.
+- No settings, raw XML, TDL, SQL, alter or delete tools are registered.
+- Approvals, the journal and read-back are unchanged.
+
+Tests (`tests/test_mcp_backend.py`) use the real MCP stdio path against RAJTALLYFINLMCP's demo Tally. Real TallyPrime remains a gate. The Bridge ↔ Gateway hop is still REST over mTLS (`/tools/list`, `/tools/call`).
 
 ## 3. One-time pairing
 
@@ -65,7 +84,7 @@ The current `/tools/call` HTTP endpoint is a custom REST interface; its name and
 6. The binding records company name/GUID and books-from date.
 7. Posting starts disabled and needs separate server and local enablement.
 
-Known issue: the current implementation consumes the code before validating the CSR. Pairing retry behavior must be fixed before deployment.
+The code is consumed only after the CSR is validated and the certificate issued. Redemption and device creation happen in one transaction (R7).
 
 ## 4. Connection and trust
 
@@ -81,7 +100,7 @@ The client PC starts an outbound OpenSSH connection. It requests a reverse liste
 | Execution envelope | Bind a write approval to the exact voucher payload |
 | Local journal / read-back | Track attempted effects and verify what Tally stored |
 
-A connected SSH process is not proof that Gateway, Tally and the company are ready. Keep these statuses separate. Correct the current `PermitListen none` configuration and verify allowed/denied channels before using the production route.
+A connected SSH process is not proof that Gateway, Tally and the company are ready. Keep these statuses separate. The corrected `PermitListen` configuration is exercised against a real sshd by `infra/ssh/ci-sshd-test.sh` (R2). Re-run it on the production OpenSSH version.
 
 ## 5. Read-only question
 
@@ -92,11 +111,11 @@ Example: “90 દિવસથી વધુ બાકી receivables બતા�
 3. ToolSession creates a signed read token with an allowed-tool set.
 4. Bridge resolves the device route and calls Gateway over mTLS.
 5. Gateway checks the token, local pause policy and company binding.
-6. Current adapter reads Tally; the planned MCP adapter will occupy this boundary.
+6. RAJTALLYFINLMCP (reader) reads Tally; with `--backend xml` the built-in adapter does.
 7. Decimal calculation code computes totals, ageing or running balances.
 8. Portal shows report metadata, tables, totals and job activity.
 
-The model may select tools and explain results. Financial values must remain tied to deterministic tool results. The current final-text path does not enforce this completely; unsupported model figures are a known blocker.
+The model may select tools and explain results. Financial values stay tied to tool results: the answer's figures are checked against the job's saved tool data. Any unsupported figure marks the answer `unverified` in the portal (R4).
 
 ## 6. Bank reconciliation and draft preparation
 
@@ -109,7 +128,7 @@ The model may select tools and explain results. Financial values must remain tie
 7. A staff edit increments the draft version and invalidates unused approvals.
 8. Reviewer checks exact rows, company, date, ledger and amount.
 
-Ambiguous matches must never be auto-accepted. Existing matching and multi-year date-range defects must be fixed; see the roadmap.
+Ambiguous matches are never auto-accepted. Matching is order-independent (R3). Multi-year books are read in bounded windows (R6).
 
 ## 7. Approval and posting
 

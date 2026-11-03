@@ -23,21 +23,21 @@ Review observations on 2026-11-03:
 - Reproducing the documented PyInstaller entry/flags with PyInstaller 6.22.3 built an EXE successfully, but the resulting EXE failed on `--help` with a relative-import error.
 - GitHub CI was successful for the reviewed source tree; it currently covers Ubuntu tests, not Windows packaging or actual sshd.
 - Real TallyPrime, live DeepSeek inference, Windows service/reboot operation and actual SSH forwarding were not validated.
-- RAJTALLYFINLMCP is referenced in plans, but the current runtime uses the custom Tally XML adapter.
+- RAJTALLYFINLMCP is referenced in plans, but the current runtime uses the custom Tally XML adapter. *(Update: the follow-up branch wires locked RAJTALLYFINLMCP as the default connector backend and DeepSeek Harness as the agent runtime. Both are tested only against RAJTALLYFINLMCP's demo Tally and a scripted model.)*
 
 Review results must be rerun when code/dependency revisions change. The items below remain open until a fixing change and its acceptance evidence are recorded.
 
 ## Step 1 — fix defects and commit regression tests
 
-| ID | Priority | Code boundary / defect | Required acceptance check |
-|---|---|---|---|
-| R1 | P1 | `infra/windows/build-connector.ps1` builds `raj/connector/__main__.py`, whose relative import fails as a frozen entry | Use a package-aware absolute-import launcher; build the EXE and execute `--help` successfully on a clean Windows runner |
-| R2 | P1 | `infra/ssh/sshd_raj_tunnel.conf`: `PermitListen none` denies the intended remote listener; per-key allowance does not override administrative denial | Effective sshd configuration admits the assigned loopback port and denies every other requested listener |
-| R3 | P1 | `raj/calculations.py:match_statement`: marking a rival ambiguous makes the next row appear uniquely matched | Two competing bank rows / one voucher remain ambiguous; results are stable under row order permutations |
-| R4 | P1 | `raj/server/harness.py`: free-text model figures can be accepted without any tool-backed report | A scripted unsupported numeric answer cannot become a verified financial result; displayed figures bind to report data |
-| R5 | P2 | `raj/calculations.py:ageing`: default min_days=0 excludes outstanding bills whose due date is still in the future | Unfiltered ageing includes a not-due bucket and correct total; explicitly overdue-only filters still work |
-| R6 | P2 | `Service.reconcile` and ledger statements fetch from books inception while Gateway limits each request to 400 days | Reconcile one month for multi-year books using bounded paging or a verified period-opening balance; totals remain correct |
-| R7 | P2 | `/api/enroll` consumes the enrollment code before CSR validation succeeds | Invalid CSR followed by a valid retry works; two concurrent successful enrollments still cannot redeem one code twice |
+| ID | Priority | Code boundary / defect | Required acceptance check | Status in branch `ccr-31ebc73c-d3ijz6` (needs review) |
+|---|---|---|---|---|
+| R1 | P1 | `infra/windows/build-connector.ps1` builds `raj/connector/__main__.py`, whose relative import fails as a frozen entry | Use a package-aware absolute-import launcher; build the EXE and execute `--help` successfully on a clean Windows runner | Fix: `infra/windows/raj_connector_entry.py`, with an absolute import and explicit collection of the `raj`, RAJTALLYFINLMCP and MCP packages. On Linux, the PyInstaller 6.22.3 build runs `--help`, `tally-mcp --help` and `companies --backend mcp` (`infra/windows/smoke_frozen.py`). CI job `windows-connector` runs the same on `windows-latest`. **Open until that job is green.** |
+| R2 | P1 | `infra/ssh/sshd_raj_tunnel.conf`: `PermitListen none` denies the intended remote listener; per-key allowance does not override administrative denial | Effective sshd configuration admits the assigned loopback port and denies every other requested listener | Fix: `PermitListen 127.0.0.1:* localhost:*`, narrowed per key by `permitlisten`. `infra/ssh/ci-sshd-test.sh` against real OpenSSH 9.6: 16/16 checks pass on 5 consecutive runs. The old line fails the assigned-forward check. CI job `sshd-integration` |
+| R3 | P1 | `raj/calculations.py:match_statement`: marking a rival ambiguous makes the next row appear uniquely matched | Two competing bank rows / one voucher remain ambiguous; results are stable under row order permutations | Fix: every pass classifies all rows at once; a row matches only if row and voucher are mutually unique; contested vouchers are excluded from later passes. Tests: `test_competing_rows_stay_ambiguous_in_any_order`, `test_competing_references_and_one_to_many_are_order_independent` (all permutations) |
+| R4 | P1 | `raj/server/harness.py`: free-text model figures can be accepted without any tool-backed report | A scripted unsupported numeric answer cannot become a verified financial result; displayed figures bind to report data | Fix: `raj/server/provenance.py` checks every amount in the model text against the tool data saved for the job; the result is marked `verified` or `unverified`, with a `figures_unverified` event and a portal warning. Tests: `test_fabricated_figure_is_flagged_not_verified` (real Harness, scripted model), `test_provenance_checks_only_amounts_against_tool_data` |
+| R5 | P2 | `raj/calculations.py:ageing`: default min_days=0 excludes outstanding bills whose due date is still in the future | Unfiltered ageing includes a not-due bucket and correct total; explicitly overdue-only filters still work | Fix: filter only when `min_days > 0`; `not due` bucket. Test: `test_unfiltered_ageing_includes_not_due_bills` |
+| R6 | P2 | `Service.reconcile` and ledger statements fetch from books inception while Gateway limits each request to 400 days | Reconcile one month for multi-year books using bounded paging or a verified period-opening balance; totals remain correct | Fix: `ledger_vouchers_paged`, windows of at most 366 days; the 400-day gateway limit is unchanged. Test: `test_multi_year_books_reconcile_and_ledger_with_correct_opening` (books from 2022, voucher in 2023, statement in 2026) |
+| R7 | P2 | `/api/enroll` consumes the enrollment code before CSR validation succeeds | Invalid CSR followed by a valid retry works; two concurrent successful enrollments still cannot redeem one code twice | Fix: validate, issue the certificate, then redeem the code and create the device in one `BEGIN IMMEDIATE` transaction. Test: `test_bad_csr_does_not_burn_the_code_and_concurrent_redemption_is_single` (4 concurrent redemptions give exactly one device) |
 
 Additional focused regression coverage:
 
@@ -76,7 +76,7 @@ Prove all of the following:
 6. Revoke an active device: reject new authentication/routes and terminate the established tunnel.
 7. Network loss reconnects with bounded backoff; shutdown terminates owned child processes.
 
-Replace the current verification script's “any failure means restriction worked” assumptions with explicit authentication/control checks, and return a nonzero exit status if any assertion fails.
+Replace the current verification script's “any failure means restriction worked” assumptions with explicit authentication/control checks, and return a nonzero exit status if any assertion fails. *(Branch: `infra/ssh/ci-sshd-test.sh` replaces `verify-restrictions.sh` and covers items 1–4 and 6, plus host-key mismatch from item 5. Still open: the mTLS parts of item 5 inside the SSH path, and reconnect/backoff (item 7).)*
 
 OpenSSH reference: [PermitListen](https://man.openbsd.org/sshd_config#PermitListen).
 

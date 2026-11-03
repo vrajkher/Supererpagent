@@ -207,28 +207,33 @@ def create_app(settings: Settings | None = None, llm=None, dsh=None) -> FastAPI:
             raise HTTPException(422, "company name and guid required")
         if body.ssh_pubkey and not re.fullmatch(r"(ssh-ed25519|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+( [\w@.\-]+)?", body.ssh_pubkey.strip()):
             raise HTTPException(422, "unsupported SSH public key")
-        with db.tx() as t:
-            e = t.conn.execute("SELECT * FROM enrollments WHERE code_hash=?", (sha(body.code.strip().upper()),)).fetchone()
-            if not e or e["used_at"] or e["expires_at"] < time.time():
-                raise HTTPException(403, "enrollment code invalid, used or expired")
-            device_id = new_id()
-            t.conn.execute("UPDATE enrollments SET used_at=?, device_id=? WHERE code_hash=?", (time.time(), device_id, e["code_hash"]))
+        # Validate everything that can fail BEFORE the single-use code is consumed (R7), so a bad CSR
+        # can be retried with the same code. The certificate is issued for a fresh, server-chosen id.
         comp = body.company
+        device_id = new_id()
         try:
             cert = pki.issue_device_cert(device_id, body.csr_pem.encode())
         except Exception as ex:  # noqa: BLE001
             raise HTTPException(422, f"bad CSR: {ex}") from ex
-        port = s.tunnel_port_base + (db.one("SELECT COUNT(*) n FROM devices")["n"] or 0) + 1
-        while db.one("SELECT 1 FROM devices WHERE tunnel_port=?", (port,)):
-            port += 1
         direct = body.direct_url if (s.allow_direct and body.direct_url) else None
+        # Redeem the code and create the device in ONE transaction: two concurrent enrollments with the
+        # same code serialize on BEGIN IMMEDIATE and only the first finds it unused.
+        with db.tx() as t:
+            e = t.conn.execute("SELECT * FROM enrollments WHERE code_hash=?", (sha(body.code.strip().upper()),)).fetchone()
+            if not e or e["used_at"] or e["expires_at"] < time.time():
+                raise HTTPException(403, "enrollment code invalid, used or expired")
+            t.conn.execute("UPDATE enrollments SET used_at=?, device_id=? WHERE code_hash=?", (time.time(), device_id, e["code_hash"]))
+            port = (t.conn.execute("SELECT MAX(tunnel_port) m FROM devices").fetchone()["m"] or s.tunnel_port_base) + 1
+            old_devices = [dict(r) for r in t.conn.execute(
+                "SELECT id, tunnel_port FROM devices WHERE client_id=? AND status='active'", (e["client_id"],))]
+            t.conn.execute(
+                "INSERT INTO devices (id, org_id, client_id, hostname, company_name, company_guid, books_from, ssh_pubkey, "
+                "tunnel_port, gateway_url, cert_fingerprint, write_enabled, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (device_id, e["org_id"], e["client_id"], body.hostname[:100], comp["name"], comp["guid"], comp.get("books_from"),
+                 body.ssh_pubkey.strip(), port, direct, fingerprint(cert), 0, "active", time.time()))
         # retire earlier connectors for this client: one active device per client in v1
-        for old in db.all("SELECT id, tunnel_port FROM devices WHERE client_id=? AND status='active'", (e["client_id"],)):
+        for old in old_devices:
             _revoke(old)
-        db.x("INSERT INTO devices (id, org_id, client_id, hostname, company_name, company_guid, books_from, ssh_pubkey, "
-             "tunnel_port, gateway_url, cert_fingerprint, write_enabled, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-             (device_id, e["org_id"], e["client_id"], body.hostname[:100], comp["name"], comp["guid"], comp.get("books_from"),
-              body.ssh_pubkey.strip(), port, direct, fingerprint(cert), 0, "active", time.time()))
         return {"device_id": device_id, "org_id": e["org_id"], "client_id": e["client_id"],
                 "device_cert_pem": cert.decode(), "bridge_ca_pem": pki.bridge_ca_pem,
                 "server_signing_pub": pki.signing_pub_pem,

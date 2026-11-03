@@ -297,3 +297,44 @@ def test_model_loop_uses_tools_and_cannot_post(env, monkeypatch):
     j = ask(env, cid, "What do we owe?")
     assert j["state"] == "COMPLETED" and "80000.00" in j["result"]["answer"]
     assert j["reports"][0]["totals"]["Total"] == "80000.00"
+
+
+def test_bad_csr_does_not_burn_the_code_and_concurrent_redemption_is_single(env):
+    """R7: an invalid CSR leaves the code usable; two concurrent valid redemptions yield exactly one device."""
+    import threading
+    from raj import pki
+    cid = env.http.post("/api/clients", json={"name": "C"}, headers=env.admin).json()["id"]
+    code = env.http.post(f"/api/clients/{cid}/enrollment", headers=env.admin).json()["code"]
+    comp = {"name": "Demo Traders Pvt Ltd", "guid": "g"}
+    bad = env.http.post("/api/enroll", json={"code": code, "company": comp, "csr_pem": "-----BEGIN junk"})
+    assert bad.status_code == 422
+    results = []
+
+    def go():
+        body = {"code": code, "company": comp, "csr_pem": pki.make_csr(pki.new_key(), "x").decode()}
+        results.append(env.http.post("/api/enroll", json=body).status_code)
+    ts = [threading.Thread(target=go) for _ in range(4)]
+    [t.start() for t in ts]
+    [t.join() for t in ts]
+    assert sorted(results) == [200, 403, 403, 403]
+    assert len([d for d in env.http.get(f"/api/clients/{cid}/devices", headers=env.admin).json() if d["status"] == "active"]) == 1
+
+
+def test_multi_year_books_reconcile_and_ledger_with_correct_opening(env):
+    """R6: books starting years before the statement are read in bounded windows; old vouchers still count."""
+    comp = env.tally.companies[0]
+    comp["books_from"] = "2022-04-01"
+    env.tally.vouchers[comp["name"]].append(
+        {"guid": "v-old", "master_id": "9", "date": "2023-06-01", "voucher_type": "Journal", "number": "J-0",
+         "ref": "", "narration": "old capital introduced",
+         "entries": [{"ledger": "HDFC Bank", "side": "dr", "amount": "1000.00"},
+                     {"ledger": "Capital Account", "side": "cr", "amount": "1000.00"}]})
+    cid, cfg, gw = env.add_client("Client A")
+    j = reconcile(env, cid)
+    assert j["state"] == "WAITING_FOR_APPROVAL", j["events"][-2:]
+    s = j["draft"]["summary"]
+    assert s["tally_balance_before_period"] == "301000.00" and s["opening_difference"] == "-1000.00"
+    calls = [e["detail"] for e in j["events"] if e["event"] == "tool_call" and e["detail"]["tool"] == "ledger_vouchers"]
+    assert len(calls) >= 4  # 2022 -> 2026 in <= 366-day windows
+    rep = ask(env, cid, "ledger of HDFC Bank")["reports"][0]
+    assert rep["totals"]["Closing (Dr+)"] == "306000.00"

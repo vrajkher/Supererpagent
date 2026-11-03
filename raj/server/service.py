@@ -13,8 +13,9 @@ from .. import calculations as calc
 from ..contracts import (make_execution_envelope, make_job_token, new_id, payload_hash,
                          sha256_hex)
 from .bridge import Bridge, BridgeError
+from . import provenance
 from .db import DB
-from .harness import VERSIONS, Harness, ToolSession
+from .harness import VERSIONS, Harness, ToolSession, ledger_vouchers_paged
 
 APPROVAL_TTL = 30 * 60
 
@@ -67,7 +68,12 @@ class Service:
         for rep in out["reports"]:
             self.db.x("INSERT INTO artifacts VALUES (?,?,?,?,?,?)",
                       (new_id(), job["id"], client["id"], "report", _j(rep), time.time()))
-        self.db.x("UPDATE jobs SET result=? WHERE id=?", (_j({"answer": out["answer"]}), job["id"]))
+        # R4: a figure in the model's text counts only if the tools returned it for this job
+        verification = provenance.check(out["answer"], out["reports"], question)
+        if verification["status"] == "unverified":
+            self.db.event(job["id"], "system", "figures_unverified", unsupported=verification["unsupported"])
+        self.db.x("UPDATE jobs SET result=? WHERE id=?",
+                  (_j({"answer": out["answer"], "verification": verification}), job["id"]))
         self.db.set_state(job["id"], "COMPLETED")
         return self.job_view(job["id"])
 
@@ -107,7 +113,7 @@ class Service:
             books = comp.get("books_from") or first
             fetch_from = min(books, (date.fromisoformat(first) - timedelta(days=5)).isoformat())
             to = (date.fromisoformat(last) + timedelta(days=5)).isoformat()
-            vs = sess.tool("ledger_vouchers", ledger=bank_ledger, from_date=fetch_from, to_date=to)["result"]
+            vs, _ = ledger_vouchers_paged(sess, bank_ledger, fetch_from, to)
         except BridgeError as e:
             self.fail(job, e.detail, "WAITING_FOR_DEVICE" if e.status in (503, 504) else "FAILED")
             return self.job_view(job["id"])

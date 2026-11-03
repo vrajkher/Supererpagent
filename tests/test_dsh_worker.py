@@ -74,3 +74,16 @@ def test_job_token_is_wiped_after_run(dsh):
     assert j["reports"][0]["meta"]["tie_out"] == "balanced"
     spec = json.loads((e.app.state.settings.data_dir / "agent-jobs" / j["id"] / "job.json").read_text())
     assert spec["token"] == ""
+
+
+def test_fabricated_figure_is_flagged_not_verified(dsh):
+    """R4: an amount the model writes that no tool returned cannot become a verified result."""
+    e, fake = dsh
+    fake.fabricate = "Also, cash in hand is ₹9,99,999.00 as of 2026-11-03."
+    j = ask(e, "Show receivables older than 90 days")
+    v = j["result"]["verification"]
+    assert v["status"] == "unverified" and v["unsupported"] == ["9,99,999.00"]
+    assert any(x["event"] == "figures_unverified" for x in j["events"])
+    fake.fabricate = None
+    j = ask(e, "Show receivables older than 90 days")
+    assert j["result"]["verification"]["status"] == "verified"

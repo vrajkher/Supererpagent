@@ -90,3 +90,58 @@ def test_suggestions():
     assert c.suggest_ledger("INT CR FOR QTR", c.Decimal("1"), led)["ledger"] == "Interest Received"
     s = c.suggest_ledger("UPI/XYZ STORE", c.Decimal("-2000"), led)
     assert s["ledger"] == "Suspense" and s["confidence"] == "low"
+
+
+def test_competing_rows_stay_ambiguous_in_any_order():
+    """R3: two bank rows competing for one voucher must both stay ambiguous, whatever the row order."""
+    from itertools import permutations
+    rows = [
+        {"row_no": 1, "date": "2026-10-06", "narration": "A", "reference": "", "signed": "-50.00"},
+        {"row_no": 2, "date": "2026-10-07", "narration": "B", "reference": "", "signed": "-50.00"},
+        {"row_no": 3, "date": "2026-10-20", "narration": "C", "reference": "", "signed": "70.00"},
+    ]
+    tally = [{"voucher_id": "v", "date": "2026-10-06", "amount": "-50.00", "ref": "", "number": "", "narration": ""},
+             {"voucher_id": "w", "date": "2026-10-20", "amount": "70.00", "ref": "", "number": "", "narration": ""}]
+    results = set()
+    for order in permutations(rows):
+        out = {r["row_no"]: r["status"] for r in c.match_statement(list(order), tally)}
+        results.add(tuple(sorted(out.items())))
+    assert results == {((1, "ambiguous"), (2, "ambiguous"), (3, "matched"))}
+
+
+def test_competing_references_and_one_to_many_are_order_independent():
+    from itertools import permutations
+    rows = [
+        {"row_no": 1, "date": "2026-10-05", "narration": "x", "reference": "UTR1", "signed": "100.00"},
+        {"row_no": 2, "date": "2026-10-06", "narration": "y", "reference": "UTR1", "signed": "100.00"},
+        {"row_no": 3, "date": "2026-10-09", "narration": "p", "reference": "", "signed": "300.00"},
+        {"row_no": 4, "date": "2026-10-09", "narration": "q", "reference": "", "signed": "300.00"},
+    ]
+    tally = [{"voucher_id": "a", "date": "2026-10-05", "amount": "100.00", "ref": "UTR1", "number": "", "narration": ""},
+             {"voucher_id": "c", "date": "2026-10-09", "amount": "100.00", "ref": "", "number": "", "narration": ""},
+             {"voucher_id": "d", "date": "2026-10-09", "amount": "200.00", "ref": "", "number": "", "narration": ""}]
+    seen = set()
+    for order in permutations(rows):
+        seen.add(tuple(sorted((r["row_no"], r["status"]) for r in c.match_statement(list(order), tally))))
+    assert len(seen) == 1
+    assert dict(seen.pop()) == {1: "ambiguous", 2: "ambiguous", 3: "ambiguous", 4: "ambiguous"}
+
+
+def test_unfiltered_ageing_includes_not_due_bills():
+    """R5: a bill due in the future is outstanding and belongs in the unfiltered total."""
+    bills = [{"party": "P", "ref": "1", "bill_date": "2026-10-01", "due_date": "2026-12-01", "amount": "500.00"},
+             {"party": "P", "ref": "2", "bill_date": "2026-01-01", "amount": "100.00"}]
+    a = c.ageing(bills, date(2026, 10, 31))
+    assert a["total"] == "600.00"
+    assert {b["bucket"]: b["amount"] for b in a["buckets"]}["not due"] == "500.00"
+    assert c.ageing(bills, date(2026, 10, 31), min_days=91)["total"] == "100.00"
+
+
+def test_provenance_checks_only_amounts_against_tool_data():
+    from raj.server import provenance as p
+    reports = [{"totals": {"Total": "6254.00"}, "sections": [{"rows": [{"pending": 2714.0}, {"amount": "3,540.00"}]}]}]
+    assert p.check("Total ₹6,254.00: Patel 2714 and Walk-in 3540.00 for FY 2026", reports)["status"] == "verified"
+    r = p.check("Total 6254.00, plus 12,345.67 elsewhere, as of 2026-11-03, bills older than 90 days", reports)
+    assert r["status"] == "unverified" and r["unsupported"] == ["12,345.67"]
+    assert p.check("No amounts here, just 2026 and section 40A(3).", reports)["status"] == "no-figures"
+    assert p.check("Amounts above 50000 are flagged", reports, question="flag above 50000")["status"] == "no-figures"

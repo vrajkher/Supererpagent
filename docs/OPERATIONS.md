@@ -24,7 +24,7 @@ sudo sshd -t && sudo systemctl reload ssh
 ssh-keyscan -t ed25519 <public host>     # put the line in RAJ_SSH_KNOWN_HOSTS
 ```
 
-After the first test device pairs, run `infra/ssh/verify-restrictions.sh <host> <device key> <port>` from a client machine. Every line must say OK.
+Before go-live, run `sudo infra/ssh/ci-sshd-test.sh` on a staging machine with the same OpenSSH version as production. It starts its own throwaway sshd and leaves the host's own SSH configuration alone. Every line must say PASS, and the script exits non-zero otherwise.
 
 The server does not proxy the portal through SSH. Workers reach tunnels only through the bridge, which pins each gateway's identity (`<device_id>.devices.raj`, signed by the device CA). In production, run the API as a dedicated user and do not give other local users access to the loopback tunnel ports.
 
@@ -82,7 +82,7 @@ Local controls on the PC:
    - confirm the `REFERENCE` field (or the narration tag `[RAJ-…]`) survives so `find_by_ref` works;
    - kill the network mid-post and confirm recovery finds the voucher.
 3. **Bill export.** The `Bill` collection fields (`BillDate`, `ClosingBalance`, `Parent`) behave as assumed. If they don't, adjust `raj/tally/xml_client.py`.
-4. **SSH.** `verify-restrictions.sh` is all OK. Revocation closes a live tunnel.
+4. **SSH.** `ci-sshd-test.sh` passes on the production OpenSSH version. Revocation closes a live tunnel.
 5. **Windows.** Build and sign the exe, install it as a service, reboot, and confirm it reconnects. Test with Tally running in the logged-in user session.
 6. **Backups.** `infra/deploy/backup.sh` runs, and a restore drill includes pending approvals and unknown writes.
 7. **Pilot.** Two monthly cycles with 3–5 clients, accepted by the finance reviewer.

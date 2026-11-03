@@ -29,6 +29,7 @@ class FakeDeepSeek:
     def __init__(self):
         self.requests: list[dict] = []
         self.forced_tool: tuple[str, dict] | None = None   # (tool suffix, input) to force a call
+        self.fabricate: str | None = None   # extra (made-up) text appended to the final answer
 
     def respond(self, body: dict) -> list[tuple[str, dict]]:
         self.requests.append(body)
@@ -40,7 +41,8 @@ class FakeDeepSeek:
         if results:
             text = json.dumps(results[0].get("content"), ensure_ascii=False)
             nums = re.findall(r"\d[\d,]*\.\d\d", text)
-            return self._text(f"Done. Key figures from the tool: {', '.join(nums[:3]) or 'see report'}.")
+            answer = f"Done. Key figures from the tool: {', '.join(nums[:3]) or 'see report'}."
+            return self._text(answer + (f" {self.fabricate}" if self.fabricate else ""))
         question = ""
         for m in reversed(msgs):
             if m.get("role") == "user":

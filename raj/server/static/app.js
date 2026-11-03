@@ -100,7 +100,11 @@ function viewAsk(v) {
   });
 }
 function showReadJob(j, el) {
-  el.innerHTML = `<div class="card">${stateBadge(j.state)} ${j.result?.answer ? `<p class="answer">${esc(j.result.answer)}</p>` : ""}
+  const v = j.result?.verification;
+  const vnote = v?.status === "unverified"
+    ? `<div class="err">Not verified: these figures in the answer were not returned by any tool for this job: <b>${esc(v.unsupported.join(", "))}</b>. Rely on the report tables below.</div>`
+    : v?.status === "verified" ? `<div class="muted good">✓ Every figure in the answer matches tool data (${v.checked} checked).</div>` : "";
+  el.innerHTML = `<div class="card">${stateBadge(j.state)} ${j.result?.answer ? `<p class="answer">${esc(j.result.answer)}</p>${vnote}` : ""}
     ${j.result?.error ? `<div class="err">${esc(j.result.error)}</div>` : ""}${events(j)}</div>${j.reports.map(report).join("")}`;
 }
 

@@ -83,7 +83,7 @@ def ageing(bills: list[dict], as_of: date, kind: str = "receivable", min_days: i
     Age measured from due date when present, else bill date.
     """
     sign = Decimal(1) if kind == "receivable" else Decimal(-1)
-    buckets = {bucket_label(lo, hi): Decimal("0.00") for lo, hi in BUCKETS}
+    buckets = {"not due": Decimal("0.00"), **{bucket_label(lo, hi): Decimal("0.00") for lo, hi in BUCKETS}}
     parties: dict[str, dict] = {}
     detail = []
     for b in bills:
@@ -92,7 +92,7 @@ def ageing(bills: list[dict], as_of: date, kind: str = "receivable", min_days: i
             continue
         ref_date = b.get("due_date") or b["bill_date"]
         days = (as_of - date.fromisoformat(ref_date)).days
-        if days < min_days:
+        if min_days and days < min_days:   # only an explicit "older than" filter drops bills
             continue
         label = next(bucket_label(lo, hi) for lo, hi in BUCKETS if days >= lo and (hi is None or days <= hi)) \
             if days >= 0 else "not due"
@@ -337,7 +337,6 @@ def match_statement(rows: list[dict], tally_entries: list[dict], window_days: in
     Rules (in order): duplicate source rows; reference + amount; amount + date window (unique);
     one-to-many (2..3 Tally entries same window summing exactly). Never amount alone.
     """
-    used: set[str] = set()
     seen: dict[tuple, int] = {}
     out = []
     for r in rows:
@@ -353,45 +352,66 @@ def match_statement(rows: list[dict], tally_entries: list[dict], window_days: in
     def within(r, t):
         return abs((date.fromisoformat(r["date"]) - date.fromisoformat(t["date"])).days) <= window_days
 
-    # pass 1: reference
-    for r in out:
-        if r["status"] != "unmatched" or not _norm(r["reference"]):
-            continue
-        ref = _norm(r["reference"])
-        cands = [t for t in tally_entries if t["voucher_id"] not in used and money(t["amount"]) == money(r["signed"])
-                 and ref and (ref == _norm(t.get("ref")) or ref == _norm(t.get("number")) or (len(ref) >= 5 and ref in _norm(t.get("narration"))))]
-        if len(cands) == 1:
-            used.add(cands[0]["voucher_id"])
-            r.update(status="matched", matched_vouchers=[cands[0]["voucher_id"]], evidence=f"reference {r['reference']} + amount")
-        elif len(cands) > 1:
-            r.update(status="ambiguous", matched_vouchers=[c["voucher_id"] for c in cands], evidence="reference matches several vouchers")
-    # pass 2: amount + date window, unique both ways
-    for r in out:
-        if r["status"] != "unmatched":
-            continue
-        cands = [t for t in tally_entries if t["voucher_id"] not in used and money(t["amount"]) == money(r["signed"]) and within(r, t)]
-        if len(cands) == 1:
-            rivals = [o for o in out if o is not r and o["status"] == "unmatched" and money(o["signed"]) == money(r["signed"]) and within(o, cands[0])]
-            if rivals:
-                r.update(status="ambiguous", matched_vouchers=[cands[0]["voucher_id"]], evidence="several statement rows fit the same voucher")
+    used: set[str] = set()        # vouchers matched to a row
+    contested: set[str] = set()   # vouchers several rows compete for: never auto-matched by a later pass
+
+    def assign(pred, ok_evidence: str, many_vouchers: str, many_rows: str) -> None:
+        """Classify every still-unmatched row at once, so the result never depends on row order:
+        a row matches only if it has exactly one candidate voucher AND that voucher has exactly one
+        candidate row. Everything else with candidates is ambiguous."""
+        pending = [r for r in out if r["status"] == "unmatched"]
+        avail = [t for t in tally_entries if t["voucher_id"] not in used and t["voucher_id"] not in contested]
+        cands = {id(r): [t for t in avail if pred(r, t)] for r in pending}
+        rows_for: dict[str, list] = defaultdict(list)
+        for r in pending:
+            for t in cands[id(r)]:
+                rows_for[t["voucher_id"]].append(r)
+        decisions = []
+        for r in pending:
+            c = cands[id(r)]
+            if not c:
                 continue
-            used.add(cands[0]["voucher_id"])
-            r.update(status="matched", matched_vouchers=[cands[0]["voucher_id"]], evidence=f"amount + date within {window_days} days")
-        elif len(cands) > 1:
-            r.update(status="ambiguous", matched_vouchers=[c["voucher_id"] for c in cands], evidence="same amount on several vouchers in window")
-    # pass 3: one statement row = 2..3 Tally entries
-    for r in out:
-        if r["status"] != "unmatched":
-            continue
-        pool = [t for t in tally_entries if t["voucher_id"] not in used and within(r, t)
-                and (money(t["amount"]) > 0) == (money(r["signed"]) > 0)][:12]
-        hits = [c for n in (2, 3) for c in combinations(pool, n) if sum(money(t["amount"]) for t in c) == money(r["signed"])]
-        if len(hits) == 1:
-            for t in hits[0]:
-                used.add(t["voucher_id"])
+            if len(c) == 1 and len(rows_for[c[0]["voucher_id"]]) == 1:
+                decisions.append((r, "matched", [c[0]["voucher_id"]], ok_evidence))
+            elif len(c) > 1:
+                decisions.append((r, "ambiguous", [t["voucher_id"] for t in c], many_vouchers))
+            else:
+                decisions.append((r, "ambiguous", [c[0]["voucher_id"]], many_rows))
+        for r, status, vids, ev in decisions:
+            r.update(status=status, matched_vouchers=vids, evidence=ev)
+            (used if status == "matched" else contested).update(vids)
+
+    def ref_pred(r, t):
+        ref = _norm(r["reference"])
+        return bool(ref) and money(t["amount"]) == money(r["signed"]) and (
+            ref == _norm(t.get("ref")) or ref == _norm(t.get("number")) or (len(ref) >= 5 and ref in _norm(t.get("narration"))))
+
+    # pass 1: reference + amount
+    assign(ref_pred, "reference + amount", "reference matches several vouchers", "several statement rows carry this reference")
+    # pass 2: amount + date window, unique both ways
+    assign(lambda r, t: money(t["amount"]) == money(r["signed"]) and within(r, t),
+           f"amount + date within {window_days} days", "same amount on several vouchers in window",
+           "several statement rows fit the same voucher")
+    # pass 3: one statement row = 2..3 Tally entries (bounded search), unique both ways
+    pending = [r for r in out if r["status"] == "unmatched"]
+    hits_for = {}
+    for r in pending:
+        pool = [t for t in tally_entries if t["voucher_id"] not in used and t["voucher_id"] not in contested
+                and within(r, t) and (money(t["amount"]) > 0) == (money(r["signed"]) > 0)][:12]
+        hits_for[id(r)] = [c for n in (2, 3) for c in combinations(pool, n)
+                           if sum(money(t["amount"]) for t in c) == money(r["signed"])]
+    claim: dict[str, int] = defaultdict(int)
+    for r in pending:
+        for c in hits_for[id(r)]:
+            for t in c:
+                claim[t["voucher_id"]] += 1
+    for r in pending:
+        hits = hits_for[id(r)]
+        if len(hits) == 1 and all(claim[t["voucher_id"]] == 1 for t in hits[0]):
             r.update(status="matched", matched_vouchers=[t["voucher_id"] for t in hits[0]], evidence="one-to-many: sum of vouchers")
-        elif len(hits) > 1:
-            r.update(status="ambiguous", evidence="several voucher combinations fit")
+        elif hits:
+            r.update(status="ambiguous", matched_vouchers=sorted({t["voucher_id"] for c in hits for t in c}),
+                     evidence="several voucher combinations fit" if len(hits) > 1 else "vouchers also fit another statement row")
     return out
 
 

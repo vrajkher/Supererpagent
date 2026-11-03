@@ -9,3 +9,27 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -e ".[dev,agent,tally]"
       - run: pytest -q
+
+  sshd-integration:
+    # Real OpenSSH: assigned loopback reverse forward allowed; other ports, public listeners, shell, PTY,
+    # SFTP, local/dynamic/agent forwarding, unknown keys, wrong host keys and revoked devices refused.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -q && sudo apt-get install -y -q openssh-server openssh-client iproute2 curl
+      - run: sudo bash infra/ssh/ci-sshd-test.sh
+
+  windows-connector:
+    # Builds raj-connector.exe exactly as infra/windows/build-connector.ps1 does and runs it.
+    # The artifact is an UNSIGNED test build, not a release.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - shell: pwsh
+        run: ./infra/windows/build-connector.ps1
+      - shell: pwsh
+        run: ./.build/Scripts/python infra/windows/smoke_frozen.py dist/raj-connector.exe
+      - uses: actions/upload-artifact@v4
+        with: {name: raj-connector-unsigned-test-build, path: dist/raj-connector.exe, retention-days: 7}
