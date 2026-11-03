@@ -1,8 +1,12 @@
 # RAJ Finance Agent — Implementation Plan
 
-Status (updated): M0–M3 and most of M4 are implemented in this repo; see README "What works now" and docs/OPERATIONS.md "Go-live gates" for what is still unverified (live TallyPrime, sshd, Windows build).
+Status clarified: 2026-11-03. This document preserves the original target design and proposed milestones. Its diagrams and proposed paths are not an inventory of implemented components.
 
-Original status: engineering plan, derived from `docs/PRODUCT_PLAN.md` (v1.0) and the agreed two-part architecture. Nothing in this document is built yet. Items marked **VERIFY** depend on behaviour of pinned third-party releases (DeepSeek Harness, RAJTALLYFINLMCP, OpenSSH, TallyPrime) that must be confirmed before coding against them.
+For the current runtime and complete user workflow, read [WORKFLOW.md](WORKFLOW.md). For the agreed next five delivery steps and acceptance gates, read [ROADMAP.md](ROADMAP.md).
+
+The current implementation uses a custom Python harness, SQLite, custom REST Gateway and its own Tally XML adapter. RAJTALLYFINLMCP, the separate DeepSeek Harness, PostgreSQL and the proposed stdio MCP bridge are not integrated into the current runtime. Existing fake-Tally tests do not establish those integrations.
+
+Review baseline: the original 27 tests passed; additional regressions and Windows packaging/SSH configuration defects remain open as recorded in the roadmap. Real TallyPrime, actual sshd transport and Windows service/reboot validation remain release gates. References below to “M0–M4” or planned security mechanisms are requirements to verify, not completion claims.
 
 ---
 
@@ -17,7 +21,7 @@ Original status: engineering plan, derived from `docs/PRODUCT_PLAN.md` (v1.0) an
 
 ---
 
-## 1. Architecture (fixed for v1)
+## 1. Target architecture (planned integrations)
 
 ```mermaid
 flowchart TD
