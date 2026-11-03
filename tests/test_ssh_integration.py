@@ -38,6 +38,7 @@ def sshd(tmp_path):
         # sshd requires every AuthorizedKeysCommand parent to be root-owned and non-writable.
         auth = Path("/run") / f"raj-ssh-{os.getpid()}-{tmp_path.name}"
         auth.mkdir(mode=0o755)
+        auth.chmod(0o755)
         key, hostkey = auth / "device", auth / "host"
         for target in (key, hostkey):
             subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(target)], check=True)
@@ -47,11 +48,17 @@ def sshd(tmp_path):
             connection.execute("CREATE TABLE devices (ssh_pubkey TEXT, tunnel_port INTEGER, status TEXT)")
             connection.execute("INSERT INTO devices VALUES (?,?,'active')", (key.with_suffix('.pub').read_text().strip(), assigned))
         database.chmod(0o644)
+        program = auth / "keys-program.py"
+        program.write_bytes((ROOT / "infra/ssh/raj-authorized-keys").read_bytes())
+        program.chmod(0o644)
         command = auth / "authorized-keys"
         command.write_text("#!/bin/sh\nRAJ_DB=" + shlex.quote(str(database))
                            + " RAJ_SSH_USER=rajtunnel exec /usr/bin/python3 "
-                           + shlex.quote(str(ROOT / "infra/ssh/raj-authorized-keys")) + ' "$@"\n')
+                           + shlex.quote(str(program)) + ' "$@"\n')
         command.chmod(0o755)
+        control = subprocess.run(["runuser", "-u", "raj-keys", "--", str(command), "rajtunnel"],
+                                 capture_output=True, text=True)
+        assert control.returncode == 0 and "permitlisten=" in control.stdout, control.stderr
         policy = (ROOT / "infra/ssh/sshd_raj_tunnel.conf").read_text().replace(
             "/opt/raj/infra/ssh/raj-authorized-keys", str(command))
         config = auth / "sshd_config"
@@ -86,6 +93,7 @@ def sshd(tmp_path):
             daemon.wait(timeout=10)
         if log:
             log.close()
+            print("Isolated sshd log:\n" + (auth / "sshd.log").read_text()[-12000:])
         for name in reversed(created):
             subprocess.run(["userdel", name], check=False, capture_output=True)
         if auth is not None:

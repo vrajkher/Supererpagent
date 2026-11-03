@@ -24,7 +24,7 @@ sudo sshd -t && sudo systemctl reload ssh
 ssh-keyscan -t ed25519 <public host>     # put the line in RAJ_SSH_KNOWN_HOSTS
 ```
 
-After the first test device pairs, run `infra/ssh/verify-restrictions.sh <host> <device key> <port>` from a client machine. Every line must say OK.
+Run the isolated SSH CI job before deployment. For manual verification on a disposable test SSH server, generate a synthetic paired key there, leave its assigned port unused, and run `infra/ssh/verify-restrictions.sh 127.0.0.1 <synthetic key> <assigned port>`. Optional environment variables: `RAJ_SSH_PORT`, `RAJ_SSH_KNOWN_HOSTS_FILE`. The verifier sends actual loopback traffic and tests denied channels, returning nonzero on failure. Do not copy production private keys to the server or use an occupied production listener.
 
 The server does not proxy the portal through SSH. Workers reach tunnels only through the bridge, which pins each gateway's identity (`<device_id>.devices.raj`, signed by the device CA). In production, run the API as a dedicated user and do not give other local users access to the loopback tunnel ports.
 

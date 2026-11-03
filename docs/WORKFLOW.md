@@ -29,7 +29,7 @@ flowchart TD
     ADAPTER --> TALLY["TallyPrime XML/HTTP"]
 ```
 
-The local demo and existing end-to-end tests connect Bridge directly to Gateway over loopback mTLS, without sshd. Production SSH configuration exists but requires correction and actual tunnel testing; see [ROADMAP.md](ROADMAP.md).
+The local demo and existing end-to-end tests connect Bridge directly to Gateway over loopback mTLS, without sshd. The corrected SSH policy is exercised by opt-in isolated sshd CI checks; deployment validation remains required. See [ROADMAP.md](ROADMAP.md).
 
 The central database is SQLite. The harness and its five finance skills are implemented in Python; integration with the separate DeepSeek Harness project is not implemented. Model API calls use an OpenAI-compatible HTTP interface. This does not imply any separate harness SDK is installed.
 
@@ -65,7 +65,7 @@ The current `/tools/call` HTTP endpoint is a custom REST interface; its name and
 6. The binding records company name/GUID and books-from date.
 7. Posting starts disabled and needs separate server and local enablement.
 
-Known issue: the current implementation consumes the code before validating the CSR. Pairing retry behavior must be fixed before deployment.
+CSR validation/signing, device registration, port allocation and single-use redemption now commit atomically. Invalid CSR leaves the code usable; concurrent redemption is regression-tested.
 
 ## 4. Connection and trust
 
@@ -81,7 +81,7 @@ The client PC starts an outbound OpenSSH connection. It requests a reverse liste
 | Execution envelope | Bind a write approval to the exact voucher payload |
 | Local journal / read-back | Track attempted effects and verify what Tally stored |
 
-A connected SSH process is not proof that Gateway, Tally and the company are ready. Keep these statuses separate. Correct the current `PermitListen none` configuration and verify allowed/denied channels before using the production route.
+A connected SSH process is not proof that Gateway, Tally and the company are ready. Keep these statuses separate. The administrative loopback allowance is intersected with each key's exact assigned port. CI checks real allowed/denied channels; validate the deployed route separately.
 
 ## 5. Read-only question
 
@@ -96,7 +96,7 @@ Example: “90 દિવસથી વધુ બાકી receivables બતા�
 7. Decimal calculation code computes totals, ageing or running balances.
 8. Portal shows report metadata, tables, totals and job activity.
 
-The model may select tools and explain results. Financial values must remain tied to deterministic tool results. The current final-text path does not enforce this completely; unsupported model figures are a known blocker.
+The model may select tools and explain results. Financial values must remain tied to deterministic tool results. The harness rejects completion without a successful report and publishes deterministic report summaries instead of model-authored final text.
 
 ## 6. Bank reconciliation and draft preparation
 
@@ -109,7 +109,7 @@ The model may select tools and explain results. Financial values must remain tie
 7. A staff edit increments the draft version and invalidates unused approvals.
 8. Reviewer checks exact rows, company, date, ledger and amount.
 
-Ambiguous matches must never be auto-accepted. Existing matching and multi-year date-range defects must be fixed; see the roadmap.
+Ambiguous matches must never be auto-accepted. Matching resolves competing candidates before row-state mutation. Non-overlapping bounded history pages preserve opening-balance history; see the roadmap for regression coverage.
 
 ## 7. Approval and posting
 

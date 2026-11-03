@@ -20,7 +20,7 @@ Firm server (Linux)                                   Client Tally PC (Windows)
 
 **Implementation boundary:** the current runtime uses a custom Python harness, SQLite and its own Tally XML adapter. RAJTALLYFINLMCP and the separate DeepSeek Harness are planned integrations, not dependencies currently wired into this runtime. The local demo/tests use direct loopback mTLS without SSH.
 
-**Review update (2026-11-03):** the original 27 tests passed in an independent Windows review, but additional checks identified accounting/model-evidence/onboarding defects. The documented PyInstaller build produced an EXE that failed at startup. The SSH configuration also requires correction and actual sshd integration testing. Follow the [roadmap](docs/ROADMAP.md) before client posting.
+**Fix update (2026-11-03):** finance matching, ageing, history paging, model-answer grounding, atomic pairing and frozen-startup fixes are implemented with regression coverage. Local Windows validation: 43 passed, 2 Linux-only checks skipped; rebuilt EXE startup passed. CI now includes Windows build/startup and actual isolated sshd tests. Real Tally and service/reboot acceptance gates remain required; see the [roadmap](docs/ROADMAP.md).
 
 ## What works now
 
@@ -31,14 +31,14 @@ Firm server (Linux)                                   Client Tally PC (Windows)
 | Pairing: single-use 24h code, local device key and CSR, server-chosen certificate identity, company binding by GUID | Done |
 | Security: per-call Ed25519 job tokens, tool allow-list, mTLS with separate device and bridge CAs, hostname-pinned gateway identity, cross-client denial | Done, tested |
 | Bank CSV/XLSX: column/date detection with required confirmation, Indian number formats, running-balance check, duplicates | Done |
-| Matching: reference+amount, amount+date window, one-to-many | Implemented; competing-row uniqueness defect reproduced. See roadmap R3. |
+| Matching: reference+amount, amount+date window, one-to-many | Mutual uniqueness and conservative ambiguity handling; permutation and search-limit regressions tested. |
 | Drafts: ledger suggestions with evidence, edit creates a new version and voids approvals | Done |
 | Approval: signed envelope over the exact payload hash; maker-checker, high-value threshold | Done |
 | Posting: server and local write switches, local SQLite journal, one writer per connector, company re-check, ledger validation, read-back verification | Done |
 | Recovery: lost Tally response is resolved by correlation reference (no blind retry); unknown results block further writes until reconciled | Done, failure-injection tested |
 | Portal: login, client switcher, Ask, Reconciliation, Jobs/audit trail, Device Health (separate statuses), staff/roles, policy, evidence export | Done, browser-tested |
-| SSH: sshd config, per-key `permitlisten`, AuthorizedKeysCommand from the DB, kill-on-revoke, verification script | Written. **Not executed here: no sshd in the build container** |
-| Windows: connector CLI, NSSM service installer, PyInstaller build script | Build reproduced on Windows; frozen EXE startup fails with a relative-import error. Service/reboot validation pending. |
+| SSH: sshd config, per-key `permitlisten`, AuthorizedKeysCommand from the DB, kill-on-revoke, verification script | Loopback/per-key policy corrected; actual isolated sshd integration checks added to CI. Deployment validation still required. |
+| Windows: connector CLI, NSSM service installer, PyInstaller build script | Frozen entrypoint fixed; local Windows build and EXE startup passed. Signed installer/service/reboot validation pending. |
 
 **Not yet validated against real TallyPrime.** All Tally request and response shapes are exercised against `raj/tally/fake_server.py`, which mimics Tally's XML collection export and IMPORTDATA. Before any client use, run the read checks and posting tests on a test company. Read [docs/OPERATIONS.md](docs/OPERATIONS.md), section "Go-live gates", first.
 
@@ -57,7 +57,7 @@ In the demo:
 3. To post, enable posting in **Device Health**, then run `raj-connector --data var/demo/connector enable-writes`.
 4. Select the rows, approve, then post.
 
-To use the DeepSeek model, set `DEEPSEEK_API_KEY` (and optionally `RAJ_MODEL` and `DEEPSEEK_BASE_URL`). Without a key, a rule-based planner picks the skill. Report calculations run in `raj/calculations.py`; final model narrative is not yet constrained to those figures. Tool-backed numerical provenance is a required roadmap fix (R4).
+To use the DeepSeek model, set `DEEPSEEK_API_KEY` (and optionally `RAJ_MODEL` and `DEEPSEEK_BASE_URL`). Without a key, a rule-based planner picks the skill. Report calculations run in `raj/calculations.py`. The model selects skills; published financial answers use deterministic report summaries. Completion without a successful report is rejected and model-authored final figures are not published.
 
 ## Layout
 
