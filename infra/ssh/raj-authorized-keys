@@ -2,7 +2,7 @@
 """AuthorizedKeysCommand: prints restricted keys for active RAJ devices.
 
 Each key may only open ONE reverse listener on loopback (its assigned port) and nothing else.
-Usage (sshd): AuthorizedKeysCommand /opt/raj/infra/ssh/raj-authorized-keys %u [database path]
+Usage (sshd): AuthorizedKeysCommand /usr/local/lib/raj/raj-authorized-keys %u [database path]
 sshd passes no environment, so the database path is an argument (default /var/lib/raj/server/raj.sqlite3).
 Env (manual runs only): RAJ_SSH_USER (default rajtunnel)
 """

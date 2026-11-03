@@ -39,7 +39,7 @@ class Settings:
         self.ssh_known_hosts = os.environ.get("RAJ_SSH_KNOWN_HOSTS", "")
         self.tunnel_port_base = int(os.environ.get("RAJ_TUNNEL_PORT_BASE", "20000"))
         self.allow_direct = os.environ.get("RAJ_ALLOW_DIRECT_GATEWAY", "0") == "1"  # dev/test only
-        self.kill_cmd = os.environ.get("RAJ_SSH_KILL_CMD", "")  # e.g. "sudo /opt/raj/infra/ssh/raj-kill-tunnel {port}"
+        self.kill_cmd = os.environ.get("RAJ_SSH_KILL_CMD", "")  # e.g. "sudo /usr/local/lib/raj/raj-kill-tunnel {port}"
 
 
 class LoginIn(BaseModel):

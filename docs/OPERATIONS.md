@@ -17,9 +17,12 @@ SSH ingress:
 
 ```bash
 sudo cp infra/ssh/sshd_raj_tunnel.conf /etc/ssh/sshd_config.d/50-raj-tunnel.conf
-sudo chmod 755 /opt/raj/infra/ssh/raj-authorized-keys
+# sshd and sudo run these as root: install root-owned copies OUTSIDE the raj-owned checkout
+# (a raj-writable script reachable through sudo or AuthorizedKeysCommand would be a root escalation)
+sudo install -d -m 755 -o root -g root /usr/local/lib/raj
+sudo install -m 755 -o root -g root infra/ssh/raj-authorized-keys infra/ssh/raj-kill-tunnel /usr/local/lib/raj/
 sudo setfacl -m u:raj-keys:r /var/lib/raj/server/raj.sqlite3 && sudo setfacl -m u:raj-keys:x /var/lib/raj /var/lib/raj/server
-echo 'raj ALL=(root) NOPASSWD: /opt/raj/infra/ssh/raj-kill-tunnel' | sudo tee /etc/sudoers.d/raj-kill
+echo 'raj ALL=(root) NOPASSWD: /usr/local/lib/raj/raj-kill-tunnel' | sudo tee /etc/sudoers.d/raj-kill
 sudo sshd -t && sudo systemctl reload ssh
 ssh-keyscan -t ed25519 <public host>     # put the line in RAJ_SSH_KNOWN_HOSTS
 ```

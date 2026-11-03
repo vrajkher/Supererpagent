@@ -13,7 +13,7 @@ unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY all_proxy NO_PROXY
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 PORT=${PORT:-2222}
 T=$(mktemp -d /tmp/raj-sshd-XXXXXX)
-ROOT=/opt/raj-sshd-test            # root-owned, as sshd requires for AuthorizedKeysCommand
+ROOT=${KEYCMD_ROOT:-/raj-sshd-test}  # directly under / : a root-owned chain, as sshd requires for AuthorizedKeysCommand
 ASSIGNED=20001 OTHER=20002 GW=18765
 FAIL=0
 pass() { echo "PASS  $1"; }
@@ -31,6 +31,11 @@ id rajtunnel >/dev/null 2>&1 || useradd -m -s /usr/sbin/nologin rajtunnel
 id raj-keys >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin raj-keys
 passwd -d rajtunnel >/dev/null 2>&1 || true   # unlocked account (key-only), as in production setup
 mkdir -p /run/sshd "$ROOT" && chmod 755 "$ROOT"
+# sshd refuses an AuthorizedKeysCommand whose path has a non-root or group/world-writable component
+d=$ROOT; while [ "$d" != "/" ]; do
+  if [ "$(stat -c %u "$d")" != 0 ] || [ $(( 0$(stat -c %a "$d") & 022 )) -ne 0 ]; then
+    echo "FAIL  $d is not root-owned 755-or-stricter; sshd would refuse the key command"; exit 1; fi
+  d=$(dirname "$d"); done
 install -m 755 -o root -g root "$REPO/infra/ssh/raj-authorized-keys" "$ROOT/raj-authorized-keys"
 install -m 755 -o root -g root "$REPO/infra/ssh/raj-kill-tunnel" "$ROOT/raj-kill-tunnel"
 
@@ -47,7 +52,7 @@ db.commit()
 EOF
 chown root:raj-keys "$DB"; chmod 640 "$DB"
 
-sed -e "s#/opt/raj/infra/ssh/raj-authorized-keys %u /var/lib/raj/server/raj.sqlite3#$ROOT/raj-authorized-keys %u $DB#" \
+sed -e "s#/usr/local/lib/raj/raj-authorized-keys %u /var/lib/raj/server/raj.sqlite3#$ROOT/raj-authorized-keys %u $DB#" \
     "${CONF:-$REPO/infra/ssh/sshd_raj_tunnel.conf}" > "$T/match.conf"
 cat > "$T/sshd_config" <<EOF
 Port $PORT
