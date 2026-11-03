@@ -44,7 +44,7 @@ Source: "pair.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README-connector.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
-Name: "{commonappdata}\RAJ"
+Name: "{commonappdata}\RAJ"; Flags: uninsneveruninstall
 
 [Icons]
 Name: "{group}\Pair this PC with the firm"; Filename: "{app}\pair.cmd"; WorkingDir: "{app}"
