@@ -145,3 +145,20 @@ def test_provenance_checks_only_amounts_against_tool_data():
     assert r["status"] == "unverified" and r["unsupported"] == ["12,345.67"]
     assert p.check("No amounts here, just 2026 and section 40A(3).", reports)["status"] == "no-figures"
     assert p.check("Amounts above 50000 are flagged", reports, question="flag above 50000")["status"] == "no-figures"
+
+
+def test_windows_task_definition():
+    """The background task runs as SYSTEM at boot, restarts on failure and logs to the data folder."""
+    import xml.etree.ElementTree as ET
+    from raj.connector.winservice import build_task_xml
+    xml = build_task_xml(r"C:\Program Files\RAJ Connector\raj-connector.exe",
+                         ["--data", r"C:\ProgramData\RAJ", "run", "--log", r"C:\ProgramData\RAJ\connector.log"],
+                         r"C:\ProgramData\RAJ")
+    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    root = ET.fromstring(xml.split("?>", 1)[1])
+    assert root.find("t:Principals/t:Principal/t:UserId", ns).text == "S-1-5-18"
+    assert root.find("t:Triggers/t:BootTrigger", ns) is not None
+    assert root.find("t:Settings/t:RestartOnFailure/t:Count", ns).text == "999"
+    assert root.find("t:Settings/t:ExecutionTimeLimit", ns).text == "PT0S"
+    assert root.find("t:Actions/t:Exec/t:Arguments", ns).text == \
+        r"--data C:\ProgramData\RAJ run --log C:\ProgramData\RAJ\connector.log"

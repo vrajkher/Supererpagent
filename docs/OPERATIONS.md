@@ -39,21 +39,37 @@ The finance agent runs on DeepSeek Harness when `DEEPSEEK_API_KEY` is set (`RAJ_
 
 ## 2. Client PC (Windows)
 
-1. Confirm TallyPrime's XML/HTTP server is on port 9000 and the client's company is open.
-2. Enable the Windows OpenSSH client (Optional Features).
-3. In the portal, select the client, go to **Device Health**, and choose **Create pairing code**.
-4. Copy the signed `raj-connector.exe` and `nssm.exe` to the PC. As Administrator, run `infra/windows/install-connector.ps1 -Server https://raj.example.in -Code RAJ-XXXX-...`.
-   - The exe bundles RAJTALLYFINLMCP, the default `--backend mcp`. It starts two locked copies pinned to the paired company: a read-only one, and a voucher-only writer that starts only after posting is enabled.
-   - To use the minimal built-in XML adapter instead, pair with `--backend xml`.
-5. Confirm the company when prompted. Device Health should then show PC online → SSH connected → Gateway ok → Tally running → Company ready.
+**Installer.** `RAJ-Connector-Setup-<version>.exe` installs everything the client PC needs.
+- **Build it** on a Windows build machine with `infra/windows/build-installer.ps1`, then sign it.
+- **CI.** Each PR builds an unsigned test copy (artifact `raj-connector-setup-unsigned-test-build`). CI also installs that copy silently, checks it and uninstalls it on `windows-latest`.
 
-Local controls on the PC:
+What the installer does:
+- **Connector.** Installs `raj-connector.exe` to `Program Files\RAJ Connector`. The exe bundles RAJTALLYFINLMCP.
+- **Data folder.** Creates `C:\ProgramData\RAJ` for keys, config, journal and log. Only SYSTEM and Administrators can open it.
+- **OpenSSH.** Installs the Windows OpenSSH client if it is missing. The tunnel needs it.
+- **Pairing.** Asks for the firm server address and pairing code, then pairs the PC. The person at the PC confirms the Tally company in a console window.
+- **Background task.** Registers the Task Scheduler task **RAJ Connector**. It runs as SYSTEM at boot and restarts every minute after a failure.
+- **Start menu.** Adds these shortcuts: Pair this PC, Connector status, Pause, Resume, Allow posting, Block posting, Open connector log, Read me.
+
+Steps:
+1. Confirm TallyPrime's XML/HTTP server is on port 9000 and the client's company is open.
+2. In the portal, select the client, go to **Device Health**, and choose **Create pairing code**.
+3. On the client PC, run `RAJ-Connector-Setup-<version>.exe`. Enter the server address and code, then confirm the company. For an IT rollout, use `/VERYSILENT /SERVER=https://... /CODE=RAJ-...`.
+4. Device Health should then show PC online → SSH connected → Gateway ok → Tally running → Company ready.
+5. **Uninstall:** use Settings → Apps → RAJ Connector. Then revoke the device in the portal.
+   - Uninstall removes the background task.
+   - It keeps `C:\ProgramData\RAJ` unless the person chooses to delete it.
+
+To use the minimal built-in XML adapter instead, pair from the command line with `--backend xml`.
+
+Local controls on the PC (Start menu shortcuts, or the commands):
 
 | Command | Effect |
 |---|---|
 | `raj-connector status` | Health and recent writes |
 | `raj-connector pause` / `resume` | Stops or allows all new work; applies to the next request |
 | `raj-connector enable-writes` / `disable-writes` | Local posting switch. Posting needs this **and** the server switch |
+| `raj-connector service status / start / stop` | The background task |
 
 ## 3. Daily work
 
@@ -86,7 +102,7 @@ Local controls on the PC:
    - kill the network mid-post and confirm recovery finds the voucher.
 3. **Bill export.** The `Bill` collection fields (`BillDate`, `ClosingBalance`, `Parent`) behave as assumed. If they don't, adjust `raj/tally/xml_client.py`.
 4. **SSH.** `ci-sshd-test.sh` passes on the production OpenSSH version. Revocation closes a live tunnel.
-5. **Windows.** Build and sign the exe, install it as a service, reboot, and confirm it reconnects. Test with Tally running in the logged-in user session.
+5. **Windows.** Build and sign the installer. Install it on a real client-type PC, reboot, and confirm the task starts and reconnects. Test with Tally running in the logged-in user session. CI covers silent install, verify and uninstall; it does not cover reboot or a real Tally.
 6. **Backups.** `infra/deploy/backup.sh` runs, and a restore drill includes pending approvals and unknown writes.
 7. **Pilot.** Two monthly cycles with 3–5 clients, accepted by the finance reviewer.
 
