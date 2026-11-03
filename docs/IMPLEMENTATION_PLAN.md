@@ -6,7 +6,7 @@ For the current runtime and complete user workflow, read [WORKFLOW.md](WORKFLOW.
 
 The current implementation uses a custom Python harness, SQLite, custom REST Gateway and its own Tally XML adapter. RAJTALLYFINLMCP, the separate DeepSeek Harness, PostgreSQL and the proposed stdio MCP bridge are not integrated into the current runtime. Existing fake-Tally tests do not establish those integrations.
 
-Review baseline: the original 27 tests passed; additional regressions and Windows packaging/SSH configuration defects remain open as recorded in the roadmap. Real TallyPrime, actual sshd transport and Windows service/reboot validation remain release gates. References below to “M0–M4” or planned security mechanisms are requirements to verify, not completion claims.
+Historical review found additional regressions and Windows/SSH defects after the original 27 tests passed. Current fixes and expanded CI are recorded in the roadmap; this target plan does not supersede that status. Real TallyPrime, actual sshd transport and Windows service/reboot validation remain release gates. References below to “M0–M4” or planned security mechanisms are requirements to verify, not completion claims.
 
 ---
 

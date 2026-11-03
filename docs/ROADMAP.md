@@ -12,6 +12,14 @@ Updated: 2026-11-03 (India time). This is a work plan with acceptance gates, not
 
 **દરેક પગલું તેના tests અને પુરાવા સાથે પૂરું થયા પછી જ આગળ વધવું.** હાલના runtime flow અને planned RAJTALLYFINLMCP integration માટે [WORKFLOW.md](WORKFLOW.md) વાંચો.
 
+## Fix implementation status
+
+[Code-fix PR #2](https://github.com/vrajkher/Supererpagent/pull/2) implements R1-R7 below, with committed regressions in `tests/test_regressions.py`. The Windows build now executes its generated EXE. CI includes Ubuntu tests, Windows tests/build/startup and explicitly opt-in isolated sshd jobs.
+
+Local Windows evidence: 43 passed, 2 Linux-only sshd checks skipped; rebuilt EXE `--help` exited 0. Check the PR CI outcomes for clean Windows and actual Linux sshd results; adding a job alone does not prove success.
+
+Steps 3-5 remain external acceptance work: real TallyPrime, test-company posting/failure/restart validation, signed service/reboot operation and the pilot. RAJTALLYFINLMCP remains a planned integration.
+
 ## Baseline and evidence boundary
 
 Reviewed source: commit `457a90e93c4c706d5abfc4cbf2fcf5ea23c1cbf6`, tree `2f7a8e58a03a5b8cbdad6fb4996729a162059206`. Main merge `a15bfa2b8fa5bb101d6ec051d507092d34f44a26` has the same tree.
@@ -19,13 +27,13 @@ Reviewed source: commit `457a90e93c4c706d5abfc4cbf2fcf5ea23c1cbf6`, tree `2f7a8e
 Review observations on 2026-11-03:
 
 - The original 27 tests passed on Windows / Python 3.12.14; they use fake Tally and direct loopback mTLS.
-- Five additional local regression probes reproduced the matching, ageing, date-range, model-evidence and enrollment-retry defects below. Those probes are review evidence, not tests already committed to the repository.
+- Five additional local regression probes reproduced the matching, ageing, date-range, model-evidence and enrollment-retry defects below. The historical failures are now represented by committed regression tests in PR #2.
 - Reproducing the documented PyInstaller entry/flags with PyInstaller 6.22.3 built an EXE successfully, but the resulting EXE failed on `--help` with a relative-import error.
 - GitHub CI was successful for the reviewed source tree; it currently covers Ubuntu tests, not Windows packaging or actual sshd.
 - Real TallyPrime, live DeepSeek inference, Windows service/reboot operation and actual SSH forwarding were not validated.
 - RAJTALLYFINLMCP is referenced in plans, but the current runtime uses the custom Tally XML adapter.
 
-Review results must be rerun when code/dependency revisions change. The items below remain open until a fixing change and its acceptance evidence are recorded.
+Review results must be rerun when code/dependency revisions change. The table below records the original defects and acceptance requirements; use the fix-status section and CI results for current progress.
 
 ## Step 1 — fix defects and commit regression tests
 

@@ -9,3 +9,28 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -e ".[dev]"
       - run: pytest -q
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+      - name: Build and execute frozen connector
+        shell: pwsh
+        run: ./infra/windows/build-connector.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-connector-test-build
+          path: dist/raj-connector.exe
+  ssh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: sudo apt-get update && sudo apt-get install -y openssh-server iproute2
+      - run: pip install -e ".[dev]"
+      - name: Test actual isolated sshd and mTLS Gateway through its tunnel
+        run: sudo env RAJ_RUN_SSH_INTEGRATION=1 "$(which python)" -m pytest -v -s tests/test_ssh_integration.py

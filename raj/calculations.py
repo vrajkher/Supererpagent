@@ -92,7 +92,7 @@ def ageing(bills: list[dict], as_of: date, kind: str = "receivable", min_days: i
             continue
         ref_date = b.get("due_date") or b["bill_date"]
         days = (as_of - date.fromisoformat(ref_date)).days
-        if days < min_days:
+        if min_days > 0 and days < min_days:
             continue
         label = next(bucket_label(lo, hi) for lo, hi in BUCKETS if days >= lo and (hi is None or days <= hi)) \
             if days >= 0 else "not due"
@@ -353,45 +353,63 @@ def match_statement(rows: list[dict], tally_entries: list[dict], window_days: in
     def within(r, t):
         return abs((date.fromisoformat(r["date"]) - date.fromisoformat(t["date"])).days) <= window_days
 
-    # pass 1: reference
-    for r in out:
-        if r["status"] != "unmatched" or not _norm(r["reference"]):
-            continue
-        ref = _norm(r["reference"])
-        cands = [t for t in tally_entries if t["voucher_id"] not in used and money(t["amount"]) == money(r["signed"])
-                 and ref and (ref == _norm(t.get("ref")) or ref == _norm(t.get("number")) or (len(ref) >= 5 and ref in _norm(t.get("narration"))))]
-        if len(cands) == 1:
-            used.add(cands[0]["voucher_id"])
-            r.update(status="matched", matched_vouchers=[cands[0]["voucher_id"]], evidence=f"reference {r['reference']} + amount")
-        elif len(cands) > 1:
-            r.update(status="ambiguous", matched_vouchers=[c["voucher_id"] for c in cands], evidence="reference matches several vouchers")
-    # pass 2: amount + date window, unique both ways
-    for r in out:
-        if r["status"] != "unmatched":
-            continue
-        cands = [t for t in tally_entries if t["voucher_id"] not in used and money(t["amount"]) == money(r["signed"]) and within(r, t)]
-        if len(cands) == 1:
-            rivals = [o for o in out if o is not r and o["status"] == "unmatched" and money(o["signed"]) == money(r["signed"]) and within(o, cands[0])]
-            if rivals:
-                r.update(status="ambiguous", matched_vouchers=[cands[0]["voucher_id"]], evidence="several statement rows fit the same voucher")
+    # Ambiguous stronger matches reserve their candidates against weaker passes.
+    reserved: set[str] = set()
+
+    def resolve(candidates, evidence):
+        # Decide from an immutable candidate graph, not already-updated row states.
+        contenders: dict[str, set[int]] = defaultdict(set)
+        for i, _row, options in candidates:
+            for option in options:
+                for voucher in option:
+                    contenders[voucher["voucher_id"]].add(i)
+        blocked = set(reserved)
+        for _i, row, options in candidates:
+            ids = {v["voucher_id"] for option in options for v in option}
+            if not options:
                 continue
-            used.add(cands[0]["voucher_id"])
-            r.update(status="matched", matched_vouchers=[cands[0]["voucher_id"]], evidence=f"amount + date within {window_days} days")
-        elif len(cands) > 1:
-            r.update(status="ambiguous", matched_vouchers=[c["voucher_id"] for c in cands], evidence="same amount on several vouchers in window")
-    # pass 3: one statement row = 2..3 Tally entries
-    for r in out:
+            if len(options) == 1 and not ids & blocked and all(len(contenders[v]) == 1 for v in ids):
+                used.update(ids)
+                row.update(status="matched", matched_vouchers=sorted(ids), evidence=evidence)
+            else:
+                reserved.update(ids)
+                row.update(status="ambiguous", matched_vouchers=sorted(ids),
+                           evidence="several possible matches or competing statement rows; review required")
+
+    # pass 1: reference + amount, unique in both directions
+    candidates = []
+    for i, r in enumerate(out):
+        ref = _norm(r["reference"])
+        if r["status"] != "unmatched" or not ref:
+            continue
+        hits = [(t,) for t in tally_entries if t["voucher_id"] not in used
+                and money(t["amount"]) == money(r["signed"])
+                and (ref == _norm(t.get("ref")) or ref == _norm(t.get("number"))
+                     or (len(ref) >= 5 and ref in _norm(t.get("narration"))))]
+        candidates.append((i, r, hits))
+    resolve(candidates, "reference + amount")
+
+    # pass 2: amount + date window, unique in both directions
+    candidates = [(i, r, [(t,) for t in tally_entries if t["voucher_id"] not in used
+                          and money(t["amount"]) == money(r["signed"]) and within(r, t)])
+                  for i, r in enumerate(out) if r["status"] == "unmatched"]
+    resolve(candidates, f"amount + date within {window_days} days")
+
+    # pass 3: bounded 2..3-voucher combinations, also unique across rows
+    candidates = []
+    for i, r in enumerate(out):
         if r["status"] != "unmatched":
             continue
         pool = [t for t in tally_entries if t["voucher_id"] not in used and within(r, t)
-                and (money(t["amount"]) > 0) == (money(r["signed"]) > 0)][:12]
-        hits = [c for n in (2, 3) for c in combinations(pool, n) if sum(money(t["amount"]) for t in c) == money(r["signed"])]
-        if len(hits) == 1:
-            for t in hits[0]:
-                used.add(t["voucher_id"])
-            r.update(status="matched", matched_vouchers=[t["voucher_id"] for t in hits[0]], evidence="one-to-many: sum of vouchers")
-        elif len(hits) > 1:
-            r.update(status="ambiguous", evidence="several voucher combinations fit")
+                and (money(t["amount"]) > 0) == (money(r["signed"]) > 0)]
+        if len(pool) > 12:
+            r.update(status="ambiguous", evidence="combination search exceeds 12 candidates; review required")
+            reserved.update(t["voucher_id"] for t in pool)
+            continue
+        hits = [c for n in (2, 3) for c in combinations(pool, n)
+                if sum(money(t["amount"]) for t in c) == money(r["signed"])]
+        candidates.append((i, r, hits))
+    resolve(candidates, "one-to-many: sum of vouchers")
     return out
 
 

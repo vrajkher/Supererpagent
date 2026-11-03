@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import re
 import secrets
@@ -193,35 +194,50 @@ def create_app(settings: Settings | None = None, llm=None) -> FastAPI:
             if not e or e["used_at"] or e["expires_at"] < time.time():
                 raise HTTPException(403, "enrollment code invalid, used or expired")
             device_id = new_id()
+            try:
+                cert = pki.issue_device_cert(device_id, body.csr_pem.encode())
+            except Exception as ex:  # noqa: BLE001
+                raise HTTPException(422, f"bad CSR: {ex}") from ex
+            comp = body.company
+            port = s.tunnel_port_base + (t.one("SELECT COUNT(*) n FROM devices")["n"] or 0) + 1
+            while t.one("SELECT 1 FROM devices WHERE tunnel_port=?", (port,)):
+                port += 1
+            if not 1024 <= port <= 65535:
+                raise HTTPException(503, "no connector tunnel port available")
+            direct = body.direct_url if (s.allow_direct and body.direct_url) else None
+            old_devices = t.all("SELECT id, tunnel_port FROM devices WHERE client_id=? AND status='active'", (e["client_id"],))
+            for old in old_devices:
+                _retire_device(old)
+            t.x("INSERT INTO devices (id, org_id, client_id, hostname, company_name, company_guid, books_from, ssh_pubkey, "
+                "tunnel_port, gateway_url, cert_fingerprint, write_enabled, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (device_id, e["org_id"], e["client_id"], body.hostname[:100], comp["name"], comp["guid"], comp.get("books_from"),
+                 body.ssh_pubkey.strip(), port, direct, fingerprint(cert), 0, "active", time.time()))
+            # Certificate, device/port allocation and single-use redemption commit together.
             t.conn.execute("UPDATE enrollments SET used_at=?, device_id=? WHERE code_hash=?", (time.time(), device_id, e["code_hash"]))
-        comp = body.company
-        try:
-            cert = pki.issue_device_cert(device_id, body.csr_pem.encode())
-        except Exception as ex:  # noqa: BLE001
-            raise HTTPException(422, f"bad CSR: {ex}") from ex
-        port = s.tunnel_port_base + (db.one("SELECT COUNT(*) n FROM devices")["n"] or 0) + 1
-        while db.one("SELECT 1 FROM devices WHERE tunnel_port=?", (port,)):
-            port += 1
-        direct = body.direct_url if (s.allow_direct and body.direct_url) else None
-        # retire earlier connectors for this client: one active device per client in v1
-        for old in db.all("SELECT id, tunnel_port FROM devices WHERE client_id=? AND status='active'", (e["client_id"],)):
-            _revoke(old)
-        db.x("INSERT INTO devices (id, org_id, client_id, hostname, company_name, company_guid, books_from, ssh_pubkey, "
-             "tunnel_port, gateway_url, cert_fingerprint, write_enabled, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-             (device_id, e["org_id"], e["client_id"], body.hostname[:100], comp["name"], comp["guid"], comp.get("books_from"),
-              body.ssh_pubkey.strip(), port, direct, fingerprint(cert), 0, "active", time.time()))
+        for old in old_devices:
+            _kill_tunnel(old)
         return {"device_id": device_id, "org_id": e["org_id"], "client_id": e["client_id"],
                 "device_cert_pem": cert.decode(), "bridge_ca_pem": pki.bridge_ca_pem,
                 "server_signing_pub": pki.signing_pub_pem,
                 "ssh": {"host": s.ssh_host, "port": s.ssh_port, "user": s.ssh_user, "remote_port": port,
                         "known_hosts": s.ssh_known_hosts} if s.ssh_host else {}}
 
-    def _revoke(dev: dict) -> None:
+    def _retire_device(dev: dict) -> None:
         db.x("UPDATE devices SET status='revoked' WHERE id=?", (dev["id"],))
         for j in db.all("SELECT id FROM jobs WHERE device_id=?", (dev["id"],)):
             db.x("UPDATE approvals SET revoked=1 WHERE job_id=? AND used_at IS NULL", (j["id"],))
+    def _kill_tunnel(dev: dict) -> None:
         if s.kill_cmd and dev.get("tunnel_port"):
-            subprocess.run(s.kill_cmd.format(port=int(dev["tunnel_port"])).split(), check=False, timeout=20)
+            try:
+                subprocess.run(s.kill_cmd.format(port=int(dev["tunnel_port"])).split(), check=True, timeout=20)
+            except (OSError, subprocess.SubprocessError):
+                # Revocation remains committed; cleanup failure must not burn a new pairing response.
+                logging.getLogger(__name__).exception("SSH cleanup failed for revoked device %s", dev["id"])
+
+    def _revoke(dev: dict) -> None:
+        with db.tx():
+            _retire_device(dev)
+        _kill_tunnel(dev)
 
     @app.get("/api/clients/{client_id}/devices")
     def devices(client_id: str, user=Depends(user_dep)):

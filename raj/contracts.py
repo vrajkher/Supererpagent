@@ -27,6 +27,8 @@ JOB_STATES = (
     "CANCELLED_BEFORE_POSTING", "PARTIALLY_COMPLETED", "RESULT_UNKNOWN", "FAILED",
 )
 
+MAX_VOUCHER_PERIOD_DAYS = 400
+
 READ_TOOLS = (
     "company_info", "list_ledgers", "trial_balance", "ledger_vouchers",
     "bills_outstanding",

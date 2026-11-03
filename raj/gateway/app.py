@@ -18,12 +18,12 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .. import calculations as calc
-from ..contracts import (READ_TOOLS, ContractError, load_public_key, payload_hash,
+from ..contracts import (MAX_VOUCHER_PERIOD_DAYS, READ_TOOLS, ContractError, load_public_key, payload_hash,
                          verify_object)
 from ..tally.xml_client import TallyClient, TallyError, TallyResponseLost, TallyUnreachable
 from .journal import Journal
 
-MAX_PERIOD_DAYS = 400
+MAX_PERIOD_DAYS = MAX_VOUCHER_PERIOD_DAYS
 MAX_VOUCHERS = 5000
 
 
