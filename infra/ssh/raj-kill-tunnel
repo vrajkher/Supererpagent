@@ -1,0 +1,9 @@
+#!/bin/sh
+# Close an established reverse tunnel after revocation (removing a key does not end live sessions).
+# Usage: raj-kill-tunnel <port>   (configure RAJ_SSH_KILL_CMD="sudo /opt/raj/infra/ssh/raj-kill-tunnel {port}")
+set -eu
+PORT="$1"
+case "$PORT" in *[!0-9]*|"") echo "bad port" >&2; exit 2;; esac
+for pid in $(ss -ltnpH "sport = :$PORT" | grep -o 'pid=[0-9]*' | cut -d= -f2 | sort -u); do
+  kill "$pid" && echo "closed tunnel on $PORT (sshd pid $pid)"
+done

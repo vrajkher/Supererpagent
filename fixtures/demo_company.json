@@ -1,0 +1,56 @@
+{
+  "companies": [
+    {
+      "name": "Demo Traders Pvt Ltd",
+      "guid": "a1b2c3d4-0000-4000-8000-000000000001",
+      "books_from": "2026-04-01",
+      "ledgers": [
+        {"name": "Capital Account", "parent": "Capital Account", "opening": "-500000.00"},
+        {"name": "HDFC Bank", "parent": "Bank Accounts", "opening": "300000.00"},
+        {"name": "Cash", "parent": "Cash-in-Hand", "opening": "50000.00"},
+        {"name": "Shree Ram Enterprises", "parent": "Sundry Debtors", "opening": "120000.00"},
+        {"name": "Patel Textiles", "parent": "Sundry Debtors", "opening": "80000.00"},
+        {"name": "ગુજરાત ટ્રેડર્સ", "parent": "Sundry Debtors", "opening": "45000.00"},
+        {"name": "Om Suppliers", "parent": "Sundry Creditors", "opening": "-95000.00"},
+        {"name": "Sales", "parent": "Sales Accounts", "opening": "0"},
+        {"name": "Purchase", "parent": "Purchase Accounts", "opening": "0"},
+        {"name": "Bank Charges", "parent": "Indirect Expenses", "opening": "0"},
+        {"name": "Interest Received", "parent": "Indirect Incomes", "opening": "0"},
+        {"name": "Suspense", "parent": "Suspense A/c", "opening": "0"}
+      ],
+      "vouchers": [
+        {"guid": "v-0001", "master_id": "1", "date": "2026-10-05", "voucher_type": "Receipt", "number": "R-1",
+         "ref": "UTR778812", "narration": "Received from Shree Ram Enterprises",
+         "entries": [{"ledger": "HDFC Bank", "side": "dr", "amount": "20000.00"},
+                     {"ledger": "Shree Ram Enterprises", "side": "cr", "amount": "20000.00"}]},
+        {"guid": "v-0002", "master_id": "2", "date": "2026-10-08", "voucher_type": "Payment", "number": "P-1",
+         "ref": "004512", "narration": "Chq paid to Om Suppliers",
+         "entries": [{"ledger": "Om Suppliers", "side": "dr", "amount": "15000.00"},
+                     {"ledger": "HDFC Bank", "side": "cr", "amount": "15000.00"}]},
+        {"guid": "v-0003", "master_id": "3", "date": "2026-10-10", "voucher_type": "Journal", "number": "J-1",
+         "ref": "", "narration": "Sales to Patel Textiles",
+         "entries": [{"ledger": "Patel Textiles", "side": "dr", "amount": "30000.00"},
+                     {"ledger": "Sales", "side": "cr", "amount": "30000.00"}]}
+      ],
+      "bills": [
+        {"ref": "S-101", "party": "Shree Ram Enterprises", "bill_date": "2026-05-10", "amount": "60000.00"},
+        {"ref": "S-140", "party": "Shree Ram Enterprises", "bill_date": "2026-09-20", "amount": "40000.00"},
+        {"ref": "P-88", "party": "Patel Textiles", "bill_date": "2026-07-01", "amount": "80000.00"},
+        {"ref": "P-120", "party": "Patel Textiles", "bill_date": "2026-10-10", "amount": "30000.00"},
+        {"ref": "G-12", "party": "ગુજરાત ટ્રેડર્સ", "bill_date": "2026-03-15", "amount": "45000.00"},
+        {"ref": "PO-9", "party": "Om Suppliers", "bill_date": "2026-06-01", "amount": "-80000.00"}
+      ]
+    },
+    {
+      "name": "Other Client Co",
+      "guid": "b9b9b9b9-0000-4000-8000-000000000002",
+      "books_from": "2026-04-01",
+      "ledgers": [
+        {"name": "Capital Account", "parent": "Capital Account", "opening": "-1000.00"},
+        {"name": "SBI Bank", "parent": "Bank Accounts", "opening": "1000.00"}
+      ],
+      "vouchers": [],
+      "bills": []
+    }
+  ]
+}
