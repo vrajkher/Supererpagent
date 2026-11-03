@@ -67,7 +67,7 @@ class TallyClient:
     # ------------------------------------------------------------ transport
     def _post(self, body: bytes, *, is_write: bool = False) -> ET.Element:
         try:
-            with httpx.Client(timeout=self.timeout) as c:
+            with httpx.Client(timeout=self.timeout, trust_env=False) as c:  # Tally is local: never via a proxy
                 with c.stream("POST", self.url, content=body,
                               headers={"Content-Type": "text/xml; charset=utf-8"}) as r:
                     chunks, size = [], 0

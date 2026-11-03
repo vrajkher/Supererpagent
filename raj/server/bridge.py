@@ -44,7 +44,7 @@ class Bridge:
         url = self.route(device_id) + path
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         try:
-            with httpx.Client(verify=self.ctx, timeout=self.timeout) as c:
+            with httpx.Client(verify=self.ctx, timeout=self.timeout, trust_env=False) as c:
                 r = c.request(method, url, json=json, headers=headers,
                               extensions={"sni_hostname": device_hostname(device_id)})
         except httpx.ConnectError as e:

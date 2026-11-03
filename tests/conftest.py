@@ -33,7 +33,7 @@ def login(client, email, pw):
 
 
 def start_gateway(cfg):
-    gw, srv = gateway_server(cfg, TallyClient(cfg.tally_url, timeout=5))
+    gw, srv = gateway_server(cfg, TallyClient(cfg.tally_url, timeout=5) if cfg.tally_backend == "xml" else None)
     t = threading.Thread(target=srv.run, daemon=True)
     t.start()
     for _ in range(100):
@@ -46,6 +46,7 @@ def start_gateway(cfg):
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("RAJ_ALLOW_DIRECT_GATEWAY", "1")
+    monkeypatch.setenv("RAJ_AGENT_RUNTIME", "rules")
     e = Env()
     e.tally = FakeTally()
     e.tally_srv, tport = serve(e.tally)
@@ -63,7 +64,7 @@ def env(tmp_path, monkeypatch):
         code = e.http.post(f"/api/clients/{cid}/enrollment", headers=e.admin).json()["code"]
         port = free_port()
         cfg = pair("http://testserver", code, tmp_path / f"conn-{cid[:8]}", e.tally_url, company, port,
-                   direct_url=f"https://127.0.0.1:{port}", http=e.http, assume_yes=True)
+                   direct_url=f"https://127.0.0.1:{port}", http=e.http, assume_yes=True, backend="xml")
         gw, srv = start_gateway(cfg)
         e.gateways.append(srv)
         return cid, cfg, gw

@@ -84,7 +84,8 @@ function events(job) {
 
 // ------------------------------------------------------------------ ask
 function viewAsk(v) {
-  const ex = ["Show receivables older than 90 days", "Trial balance", "Ledger of HDFC Bank", "Payables ageing", "90 દિવસથી વધુ બાકી લેણાં બતાવો"];
+  const ex = ["Show receivables older than 90 days", "Trial balance", "Ledger of HDFC Bank", "Payables ageing",
+    "What is our GST position?", "Profit and loss this year", "Balance sheet", "Run audit checks (40A(3), 269ST)", "90 દિવસથી વધુ બાકી લેણાં બતાવો"];
   v.innerHTML = `<div class="card"><h2>Ask the books</h2>
     <div class="chips">${ex.map((q) => `<button>${esc(q)}</button>`).join("")}</div>
     <textarea id="q" placeholder="e.g. Show receivables older than 90 days"></textarea>
@@ -99,7 +100,11 @@ function viewAsk(v) {
   });
 }
 function showReadJob(j, el) {
-  el.innerHTML = `<div class="card">${stateBadge(j.state)} ${j.result?.answer ? `<p class="answer">${esc(j.result.answer)}</p>` : ""}
+  const v = j.result?.verification;
+  const vnote = v?.status === "unverified"
+    ? `<div class="err">Not verified: these figures in the answer were not returned by any tool for this job: <b>${esc(v.unsupported.join(", "))}</b>. Rely on the report tables below.</div>`
+    : v?.status === "verified" ? `<div class="muted good">✓ Every figure in the answer matches tool data (${v.checked} checked).</div>` : "";
+  el.innerHTML = `<div class="card">${stateBadge(j.state)} ${j.result?.answer ? `<p class="answer">${esc(j.result.answer)}</p>${vnote}` : ""}
     ${j.result?.error ? `<div class="err">${esc(j.result.error)}</div>` : ""}${events(j)}</div>${j.reports.map(report).join("")}`;
 }
 

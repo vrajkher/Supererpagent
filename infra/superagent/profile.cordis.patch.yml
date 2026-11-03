@@ -1,0 +1,10 @@
+# $DSH_HOME/profiles/superagent/cordis.patch.yml for the RAJ development agent.
+# Replace <placeholders>; see infra/superagent/README.md. Development only: this profile never gets
+# production SSH keys, connector certificates, client data or a DEEPSEEK key used by the finance service.
+- id: webserver
+  config:
+    host: 127.0.0.1
+    port: 3082
+- id: dsh-superagent
+  config:
+    stateDir: <absolute path, e.g. /home/raj-dev/.dsh/state/superagent>

@@ -2,8 +2,9 @@
 """AuthorizedKeysCommand: prints restricted keys for active RAJ devices.
 
 Each key may only open ONE reverse listener on loopback (its assigned port) and nothing else.
-Usage (sshd): AuthorizedKeysCommand /opt/raj/infra/ssh/raj-authorized-keys %u
-Env: RAJ_DB (default /var/lib/raj/server/raj.sqlite3), RAJ_SSH_USER (default rajtunnel)
+Usage (sshd): AuthorizedKeysCommand /usr/local/lib/raj/raj-authorized-keys %u [database path]
+sshd passes no environment, so the database path is an argument (default /var/lib/raj/server/raj.sqlite3).
+Env (manual runs only): RAJ_SSH_USER (default rajtunnel)
 """
 import os
 import re
@@ -13,7 +14,8 @@ import sys
 user = sys.argv[1] if len(sys.argv) > 1 else ""
 if user != os.environ.get("RAJ_SSH_USER", "rajtunnel"):
     sys.exit(0)
-db = sqlite3.connect(f"file:{os.environ.get('RAJ_DB', '/var/lib/raj/server/raj.sqlite3')}?mode=ro", uri=True)
+path = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("RAJ_DB", "/var/lib/raj/server/raj.sqlite3")
+db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
 for key, port in db.execute("SELECT ssh_pubkey, tunnel_port FROM devices WHERE status='active' AND ssh_pubkey != ''"):
     if not re.fullmatch(r"(ssh-ed25519|ecdsa-sha2-nistp256) [A-Za-z0-9+/=]+( [\w@.\-]+)?", key.strip()):
         continue  # never print anything that could inject options

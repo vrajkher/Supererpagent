@@ -36,6 +36,7 @@ class GatewayConfig:
     company_guid: str
     server_signing_pub: str
     tally_url: str = "http://127.0.0.1:9000"
+    tally_backend: str = "xml"            # "mcp" = RAJTALLYFINLMCP (locked stdio children); "xml" = built-in adapter
     listen_host: str = "127.0.0.1"
     listen_port: int = 8765
     write_enabled_local: bool = False     # local administrator ceiling (both this and server must allow)
@@ -60,7 +61,7 @@ class Gateway:
     def __init__(self, cfg: GatewayConfig, tally: TallyClient | None = None, config_path: Path | None = None):
         self.cfg = cfg
         self.config_path = config_path
-        self.tally = tally or TallyClient(cfg.tally_url)
+        self.tally = tally or make_backend(cfg)
         self.pub = load_public_key(cfg.server_signing_pub.encode())
         self.journal = Journal(Path(cfg.data_dir) / "journal.sqlite3")
         self.write_lock = threading.Lock()   # one writer per connector
@@ -110,7 +111,44 @@ class Gateway:
         return match[0]
 
     # ---------------------------------------------------------------- reads
+    def passthrough_tools(self) -> set[str]:
+        """RAJTALLYFINLMCP read-profile tools (empty with the XML backend)."""
+        if not hasattr(self.tally, "read_tools"):
+            return set()
+        try:
+            return {t for t in self.tally.read_tools() if t.startswith("tally_")}
+        except TallyError:
+            return set()
+
+    def tool_catalog(self) -> list[dict]:
+        """Read tools this connector offers, with input schemas, for the server's agent bridge."""
+        out = [{"name": t, "kind": "core"} for t in READ_TOOLS]
+        if hasattr(self.tally, "reader"):
+            self.tally.reader.ensure()
+            import asyncio
+            listed = asyncio.run_coroutine_threadsafe(self.tally.reader.client.list_tools(), self.tally.reader.loop).result(30)
+            for t in listed.tools:
+                if t.name.startswith("tally_"):
+                    schema = dict(t.input_schema or {})
+                    props = {k: v for k, v in (schema.get("properties") or {}).items() if k != "company"}
+                    schema["properties"] = props
+                    schema["required"] = [r for r in schema.get("required", []) if r != "company"]
+                    out.append({"name": t.name, "kind": "tally", "description": t.description or "",
+                                "input_schema": schema})
+        return out
+
     def run_tool(self, tool: str, args: dict) -> Any:
+        if tool.startswith("tally_"):
+            if tool not in self.passthrough_tools():
+                raise HTTPException(400, f"tool not offered by this connector: {tool}")
+            self.check_company()
+            args = {k: v for k, v in (args or {}).items() if k != "company"}  # pinned by RAJTALLYFINLMCP's lock
+            try:
+                return self.tally.call(tool, args)
+            except TallyUnreachable as e:
+                raise HTTPException(503, "Tally is not reachable") from e
+            except TallyError as e:
+                raise HTTPException(422, str(e)[:500]) from e
         if tool not in READ_TOOLS:
             raise HTTPException(400, f"unknown read tool {tool}")
         comp = self.check_company()
@@ -240,6 +278,7 @@ class Gateway:
 
     def health(self) -> dict:
         h = {"gateway": "ok", "device_id": self.cfg.device_id, "paused": self.cfg.paused,
+             "tally_backend": self.cfg.tally_backend,
              "write_enabled_local": self.cfg.write_enabled_local, "tally": "unknown", "company": "unknown",
              "unresolved_writes": len(self.journal.blocking()), "time": time.time()}
         try:
@@ -264,6 +303,11 @@ def create_app(gw: Gateway) -> FastAPI:
     @app.get("/health")
     def health():
         return gw.health()
+
+    @app.post("/tools/list")
+    def tools_list(authorization: str | None = Header(None)):
+        gw.check_token(bearer(authorization), capability="read")
+        return {"tools": gw.tool_catalog()}
 
     @app.post("/tools/call")
     async def call(req: Request, authorization: str | None = Header(None)):
@@ -290,6 +334,18 @@ def create_app(gw: Gateway) -> FastAPI:
         return JSONResponse({"detail": f"gateway error: {type(exc).__name__}"}, status_code=500)
 
     return app
+
+
+def make_backend(cfg: GatewayConfig):
+    if cfg.tally_backend == "mcp":
+        from urllib.parse import urlparse
+        from ..tally.mcp_backend import McpTallyBackend
+        u = urlparse(cfg.tally_url)
+        return McpTallyBackend(company=cfg.company_name, company_guid=cfg.company_guid,
+                               host=u.hostname or "127.0.0.1", port=u.port or 9000)
+    if cfg.tally_backend != "xml":
+        raise ValueError(f"unknown tally_backend {cfg.tally_backend}")
+    return TallyClient(cfg.tally_url)
 
 
 def default_window(days: int = 30) -> tuple[str, str]:

@@ -1,0 +1,6 @@
+{"rules": [
+  {"id": "ci-red-on-main", "name": "Fix red CI on main",
+   "instruction": "When CI on the default branch fails, find the cause, open a draft PR with the fix and the failing check now passing, and request review from vrajkher. Never skip, disable or loosen a test to get green.",
+   "enabled": true}
+ ],
+ "sources": {"github": {"allowed": [{"id": "vrajkher"}], "bots": []}}}
