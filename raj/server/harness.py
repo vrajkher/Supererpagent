@@ -20,7 +20,7 @@ from typing import Any, Callable
 import httpx
 
 from .. import calculations as calc
-from ..contracts import READ_TOOLS, make_job_token
+from ..contracts import MAX_VOUCHER_PERIOD_DAYS, READ_TOOLS, make_job_token
 from .bridge import Bridge, BridgeError
 from .db import DB
 
@@ -64,6 +64,29 @@ class ToolSession:
                       rows=len(res["result"]) if isinstance(res["result"], list) else 1)
         return res
 
+    def ledger_vouchers(self, ledger: str, from_date: str, to_date: str) -> dict:
+        """Read non-overlapping bounded pages without losing opening-balance history."""
+        try:
+            start, stop = date.fromisoformat(from_date), date.fromisoformat(to_date)
+        except (TypeError, ValueError) as e:
+            raise BridgeError(400, "from_date/to_date must be ISO dates") from e
+        if start > stop:
+            raise BridgeError(400, "from_date must not be after to_date")
+        vouchers, seen = [], set()
+        while start <= stop:
+            end = min(start + timedelta(days=MAX_VOUCHER_PERIOD_DAYS), stop)
+            res = self.tool("ledger_vouchers", ledger=ledger, from_date=start.isoformat(), to_date=end.isoformat())
+            for voucher in res["result"]:
+                identity = voucher.get("voucher_id")
+                if not identity or identity in seen:
+                    raise BridgeError(502, "missing or repeated voucher identity across history pages")
+                seen.add(identity)
+                vouchers.append(voucher)
+            start = end + timedelta(days=1) if end < stop else stop
+            if end == stop:
+                break
+        return {**res, "result": vouchers}
+
 
 # ---------------------------------------------------------------- skills (deterministic)
 
@@ -106,7 +129,7 @@ def skill_ledger_statement(sess: ToolSession, as_of: str, ledger: str, from_date
     to_date = to_date or as_of
     books = comp.get("books_from") or (date.fromisoformat(to_date) - timedelta(days=365)).isoformat()
     from_date = from_date or books
-    res = sess.tool("ledger_vouchers", ledger=L["name"], from_date=books, to_date=to_date)
+    res = sess.ledger_vouchers(ledger=L["name"], from_date=books, to_date=to_date)
     bal = calc.money(L["opening"])
     rows, opening_for_period = [], None
     for v in sorted(res["result"], key=lambda v: (v["date"], v["number"])):
@@ -235,7 +258,6 @@ class Harness:
                 calls = msg.get("tool_calls") or []
                 msgs.append({k: v for k, v in msg.items() if k in ("role", "content", "tool_calls")})
                 if not calls:
-                    answer = msg.get("content") or ""
                     break
                 for c in calls:
                     fname = c["function"]["name"]
@@ -252,6 +274,10 @@ class Harness:
                     msgs.append({"role": "tool", "tool_call_id": c["id"], "content": content})
             else:
                 answer = "Stopped: step limit reached. Partial results are shown below."
+            if not any(not rep.get("error") for rep in reports):
+                raise BridgeError(422, "No verified report was produced; model text is not accepted as book evidence")
+            # Never publish model-authored financial figures, even after a valid tool call.
+            answer = (answer + "\n\n" if answer else "") + "\n\n".join(summarise(rep) for rep in reports)
         return {"answer": answer, "reports": reports}
 
 
