@@ -34,10 +34,10 @@ def default_data_dir() -> Path:
 
 
 def _protect(path: Path) -> None:
-    """Restrict a secret file to the current account (best effort on Windows)."""
+    """Restrict a secret file to SYSTEM (which runs the background task) and Administrators."""
     if os.name == "nt":
-        user = os.environ.get("USERNAME", "")
-        subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F", "/grant:r", "SYSTEM:F"],
+        # SIDs, not names: S-1-5-18 = SYSTEM, S-1-5-32-544 = Administrators (any Windows language)
+        subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", "*S-1-5-18:F", "/grant:r", "*S-1-5-32-544:F"],
                        check=False, capture_output=True)
     else:
         path.chmod(0o600)
@@ -84,6 +84,9 @@ def pair(server: str, code: str, data: Path, tally_url: str, company: str | None
     ssh_keygen = shutil.which("ssh-keygen")
     if ssh_keygen and not (data / "ssh_key").exists():
         subprocess.run([ssh_keygen, "-q", "-t", "ed25519", "-N", "", "-C", "raj-connector", "-f", str(data / "ssh_key")], check=True)
+    if not ssh_keygen:
+        print("WARNING: the OpenSSH client (ssh-keygen / ssh) was not found. The PC can pair, but it cannot open the "
+              "tunnel to the firm server until the Windows 'OpenSSH Client' optional feature is installed; then pair again.")
     if (data / "ssh_key.pub").exists():
         ssh_pub = (data / "ssh_key.pub").read_text().strip()
         _protect(data / "ssh_key")
@@ -154,7 +157,20 @@ class SshSupervisor(threading.Thread):
             delay = min(delay * 2, 300)
 
 
-def run(data: Path) -> None:
+def _log_to(path: Path | None) -> None:
+    """Background mode: append stdout/stderr to a log file, rotated at 5 MB."""
+    if not path:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists() and path.stat().st_size > 5 * 1024 * 1024:
+        path.replace(path.with_suffix(".old.log"))
+    f = open(path, "a", buffering=1, encoding="utf-8", errors="replace")  # noqa: SIM115 - lives for the process
+    sys.stdout = sys.stderr = f
+    print(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} raj-connector starting")
+
+
+def run(data: Path, log: Path | None = None) -> None:
+    _log_to(log)
     cfg = GatewayConfig.load(data / "config.json")
     gw, server = gateway_server(cfg)
     sup = None
@@ -195,7 +211,11 @@ def main(argv: list[str] | None = None) -> None:
     pr.add_argument("--yes", action="store_true")
     pr.add_argument("--backend", choices=["mcp", "xml"], default="mcp",
                     help="mcp = RAJTALLYFINLMCP (recommended); xml = built-in minimal adapter")
-    sub.add_parser("run")
+    rn = sub.add_parser("run")
+    rn.add_argument("--log", type=Path, help="append output to this file (background task)")
+    sv = sub.add_parser("service", help="Windows: background task that starts at boot")
+    sv.add_argument("action", choices=["install", "uninstall", "status", "start", "stop"])
+    sv.add_argument("--no-start", action="store_true", help="with install: register without starting")
     sub.add_parser("status")
     for name in ("pause", "resume", "enable-writes", "disable-writes"):
         sub.add_parser(name)
@@ -211,7 +231,15 @@ def main(argv: list[str] | None = None) -> None:
         pair(a.server, a.code, a.data, a.tally, a.company, a.listen_port, a.direct_url, server_ca=a.server_ca,
              assume_yes=a.yes, backend=a.backend)
     elif a.cmd == "run":
-        run(a.data)
+        run(a.data, a.log)
+    elif a.cmd == "service":
+        from . import winservice
+        if a.action == "install":
+            winservice.install(a.data, start=not a.no_start)
+        elif a.action == "status":
+            sys.exit(winservice.status())
+        else:
+            getattr(winservice, a.action)()
     else:
         path = a.data / "config.json"
         cfg = GatewayConfig.load(path)

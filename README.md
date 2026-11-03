@@ -57,7 +57,7 @@ Development: DeepSeek Super-agent (separate machine and account) ─► pull req
 | Recovery: lost Tally response is resolved by correlation reference (no blind retry); unknown results block further writes until reconciled | Done, failure-injection tested |
 | Portal: login, client switcher, Ask, Reconciliation, Jobs/audit trail, Device Health (separate statuses), staff/roles, policy, evidence export | Done, browser-tested |
 | SSH: sshd config, per-key `permitlisten`, AuthorizedKeysCommand from the DB, kill-on-revoke | Tested against real OpenSSH 9.6 by `infra/ssh/ci-sshd-test.sh` (16 allow/deny checks; CI job `sshd-integration`). **Reconnect/backoff and production host not yet tested** |
-| Windows: connector CLI, NSSM service installer, PyInstaller build script | Build reproduced on Windows; frozen EXE startup fails with a relative-import error. Service/reboot validation pending. |
+| Windows: connector EXE and installer (`RAJ-Connector-Setup-<version>.exe`): pairing wizard, background task as SYSTEM at boot, restricted data folder, Start-menu controls, uninstall | CI job `windows-connector` builds the EXE and installer, then installs silently, checks and uninstalls on `windows-latest`. **Reboot on a real PC and code signing not yet tested** |
 
 **Not yet validated against real TallyPrime.** All Tally request and response shapes are exercised against `raj/tally/fake_server.py`, which mimics Tally's XML collection export and IMPORTDATA. Before any client use, run the read checks and posting tests on a test company. Read [docs/OPERATIONS.md](docs/OPERATIONS.md), section "Go-live gates", first.
 
@@ -102,7 +102,7 @@ raj/connector/          raj-connector CLI: pair, run (gateway + ssh -R superviso
 raj/server/             portal API, auth/roles, broker+bridge, skills, DeepSeek Harness worker + RAJ MCP bridge, jobs/approvals/posting
 raj/testing/            scripted fake DeepSeek Messages API for offline tests
 raj/server/static/      portal (dependency-free HTML/JS, responsive, light/dark)
-infra/ssh|deploy|windows  sshd config, key command, systemd, Caddy, backups, Windows service install
+infra/ssh|deploy|windows  sshd config, key command, systemd, Caddy, backups, Windows EXE + installer (Inno Setup)
 infra/superagent/       DeepSeek Super-agent profile, settings and prompts for developing this repo
 docs/                   product plan, implementation plan, operations runbook
 ```
